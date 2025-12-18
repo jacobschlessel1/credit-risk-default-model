@@ -12,6 +12,6 @@ data/
 .aws/
 
 # Environments
-.env
-.venv
+env
+venv
 
