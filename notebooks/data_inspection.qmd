@@ -1,0 +1,101 @@
+---
+title: "Data Inspection – LendingClub"
+author: "Jacob Schlessel"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook performs initial data inspection and exploratory analysis
+for the LendingClub credit risk dataset.
+
+## Setup
+
+```{python}
+import pandas as pd
+from pathlib import Path
+
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", None)
+
+# base data directory 
+DATA_DIR = Path("../data/raw")
+
+# read the two LendingClub datasets from S3 download
+accepted = pd.read_csv(
+    DATA_DIR / "accepted_2007_to_2018Q4.csv.gz",
+    low_memory=False
+)
+
+rejected = pd.read_csv(
+    DATA_DIR / "rejected_2007_to_2018Q4.csv.gz",
+    low_memory=False
+)
+
+accepted.shape, rejected.shape
+```
+
+### Drop unnecessary columns from accepted and rejected
+```{python}
+accepted = accepted.drop(columns=["id", "member_id", "url"])
+```
+
+
+### Inspecting Missingness
+
+```{python}
+missing_summary = (
+    accepted
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+missing_summary
+```
+
+
+Many rows have exactly 33 missing values, so we'll check if these are 
+really just the same 33 rows that are without data.
+
+
+```{python}
+# check if all columns with exactly 33 missing values come from same rows
+cols_33 = accepted.columns[accepted.isna().sum() == 33]
+rows_33 = accepted[cols_33[0]].isna()
+same_rows = accepted.loc[rows_33, cols_33].isna().all().all()
+
+# print a preview of the rows with all these valus missing and drop them
+accepted.loc[rows_33].head()
+accepted = accepted.loc[~rows_33].copy()
+```
+
+
+
+
+## Data Cleaning
+
+```{python}
+accepted["term"] = (
+    accepted["term"]
+    .str.replace(" months", "", regex=False)
+    .astype(int)
+)
+
+accepted["emp_length"] = (
+    accepted["emp_length"]
+    .str.replace("+ years", "", regex=False)
+    .astype(int)
+)
+```
+
+
+```{python}
+accepted["term"].value_counts(dropna=False).sort_index()
+```
