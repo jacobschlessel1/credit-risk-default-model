@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+
+# Data
+data/
+*.csv
+*.csv.gz
+*.parquet
+
+# AWS
+.aws/
+
+# Environments
+.env
+.venv
+
