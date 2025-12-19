@@ -71,13 +71,67 @@ cols_33 = accepted.columns[accepted.isna().sum() == 33]
 rows_33 = accepted[cols_33[0]].isna()
 same_rows = accepted.loc[rows_33, cols_33].isna().all().all()
 
-# print a preview of the rows with all these valus missing and drop them
+# print a preview of the rows with all these values missing and drop them
 accepted.loc[rows_33].head()
 accepted = accepted.loc[~rows_33].copy()
 ```
 
+#### Hardship Variables
+
+The following hardship variables all have the same number of missing 
+values:
+
+- `harship_payoff_balance_amount`
+- `payment_plan_start_date`
+- `hardship_last_payment_amount`
+- `hardship_status`
+- `hardship_start_date`
+- `deferral_term`
+- `hardship_amount`
+- `hardship_dpd`
+- `hardship_loan_status`
+- `hardship_length`
+- `hardship_end_date`
+- `hardship_reason`
+- `hardship_type`
+
+We'll check to make sure that there are all coincident.
+
+```{python}
+# check for coincidence
+cols_hardship_missing = accepted.columns[accepted.isna().sum() == 2249751]
+
+# identify rows where the FIRST such column is NON-missing
+rows_non_missing = accepted[cols_hardship_missing[0]].notna()
+
+# check if ALL other columns are also non-missing in EXACTLY those rows
+same_rows = accepted.loc[rows_non_missing, cols_hardship_missing].notna().all().all()
+print(same_rows)
+```
+
+These are all, in fact, coincident, meaning a missing value means an 
+individual did not experience hardship, whereas present data means he/she 
+did.
 
 
+`orig_projected_additional_accrued_interest` has more missing values than 
+the other hardship variables. This is either because this calculation was 
+made at a later date than when the hardship period began, or it is because 
+there are some hardship plans that freeze interest or only defer the 
+principal.
+
+```{python}
+print(accepted["hardship_flag"].value_counts().sort_index())
+```
+
+There were 2,259,836 cases originally labelled as "No hardship" by the 
+data curator but there were 2,249,751 instances of missing data for our 
+hardship variables, meaning there are roughly 10,000 cases where a row 
+has data for hardship variables but was classified as "No hardship". This 
+difference can be explained by the fact that some hardship cases may not 
+have formally approved or a hardship was cancelled early, so this project 
+will trust that the official designations for these cases is correct and 
+will not fill `hardship_flag` based on missing/nonmissing data.
 
 ## Data Cleaning
 
@@ -97,5 +151,5 @@ accepted["emp_length"] = (
 
 
 ```{python}
-accepted["term"].value_counts(dropna=False).sort_index()
+accepted["hardship_status"].value_counts(dropna=False).sort_index()
 ```
