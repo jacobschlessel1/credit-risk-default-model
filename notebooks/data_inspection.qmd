@@ -174,6 +174,70 @@ The number of "No settlements", matches the number of missing values for
 debt settlement variables, so the `debt_settlement_flag` variable is 
 consistent with the data.
 
+#### Secondary Applicant/ Joint Loan Variables
+
+The following secondary applicant/ joint loan variables all have the same number of missing values (2,152,647):
+
+-`sec_app_revol_util`
+-`revol_bal_joint`
+-`sec_app_open_acc`
+-`sec_app_num_rev_accts`
+-`sec_app_inq_last_6mths`
+-`sec_app_mort_acc`
+-`sec_app_open_act_il`
+-`sec_app_fico_range_low`
+-`sec_app_fico_range_high`
+-`sec_app_chargeoff_within_12_mths`
+-`sec_app_collections_12_mths_ex_med`
+-`sec_app_earliest_cr_line`
+
+These three variables have different numbers of missing values:
+-`sec_app_mths_since_last_major_derog`
+-`sec_app_revol_util`
+-`revol_bal_joint`
+-`verification_status_joint`
+-`dti_joint`
+-`annual_inc_joint`
+
+Checking for coincident for the first group:
+```{python}
+# check for coincidence
+cols_joint_missing = accepted.columns[accepted.isna().sum() == 2152647]
+
+# identify rows where the FIRST such column is NON-missing
+rows_non_missing = accepted[cols_joint_missing[0]].notna()
+
+# check if ALL other columns are also non-missing in EXACTLY those rows
+same_rows = (
+accepted.loc[rows_non_missing, cols_joint_missing].notna().all().all())
+print(same_rows)
+```
+
+For the first group, missingness indicates an individual loan. 
+`sec_app_mths_since_last_major_derog` has more missing values than these 
+variables, meaning there were some joint loans where the second applicant 
+did not have a major derogatory credit event (~72,000). 
+`sec_app_revol_util` has slightly more missing values (~1,800), meaning 
+some joint applications have no revolving credit. 
+`verification_status_joint` has slightly fewer missing values (~7,800 
+less), meaning it has data even if `sec_app_*` does not have data, and the 
+same goes for `dti_joint` and `annual_inc_joint` (~13,000 less each).
+
+
+We fill a binary variable called `joint_flag` using the `application_type` 
+variable, which is consistent with the data that exists for 
+`annual_inc_joint`.
+
+
+```{python}
+# check number of joint applications labeled as such
+print(accepted["application_type"].value_counts().sort_index())
+
+# create joint_flag variable
+accepted["joint_flag"] = (
+accepted["application_type"] == "Joint App").astype(int)
+```
+
 
 ## Data Cleaning
 
