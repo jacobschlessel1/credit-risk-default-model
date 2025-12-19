@@ -105,7 +105,8 @@ cols_hardship_missing = accepted.columns[accepted.isna().sum() == 2249751]
 rows_non_missing = accepted[cols_hardship_missing[0]].notna()
 
 # check if ALL other columns are also non-missing in EXACTLY those rows
-same_rows = accepted.loc[rows_non_missing, cols_hardship_missing].notna().all().all()
+same_rows = (
+accepted.loc[rows_non_missing, cols_hardship_missing].notna().all().all())
 print(same_rows)
 ```
 
@@ -132,6 +133,47 @@ difference can be explained by the fact that some hardship cases may not
 have formally approved or a hardship was cancelled early, so this project 
 will trust that the official designations for these cases is correct and 
 will not fill `hardship_flag` based on missing/nonmissing data.
+
+#### Debt Settlement Variables
+
+Again, there are the exact same number of missing values for all of the 
+debt settlement variables (2,226,422):
+
+-`settlement_status`
+-`debt_settlement_flag_date`
+-`settlement_date`
+-`settlement_amount`
+-`settlement_term`
+-`settlement_percentage`
+
+We will once again check for coincidence:
+
+```{python}
+# check for coincidence
+cols_debt_missing = accepted.columns[accepted.isna().sum() == 2226422]
+
+# identify rows where the FIRST such column is NON-missing
+rows_non_missing = accepted[cols_debt_missing[0]].notna()
+
+# check if ALL other columns are also non-missing in EXACTLY those rows
+same_rows = (
+accepted.loc[rows_non_missing, cols_debt_missing].notna().all().all())
+print(same_rows)
+```
+
+Here, missingness just means no settlement occurred, meaning the borrower 
+did not default at all. Present data in these rows means that the borrower 
+defaulted badly enough to negotiate a payment less than the amount that 
+was originally owed.
+
+```{python}
+print(accepted["debt_settlement_flag"].value_counts().sort_index())
+```
+
+The number of "No settlements", matches the number of missing values for 
+debt settlement variables, so the `debt_settlement_flag` variable is 
+consistent with the data.
+
 
 ## Data Cleaning
 
