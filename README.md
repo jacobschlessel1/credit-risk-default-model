@@ -13,6 +13,12 @@ Predict probability of default (PD) at loan origination using historical Lending
 
 Raw data is stored securely in AWS S3 and loaded programmatically.
 
+This project will model the following three systems:
+
+- Probability of Hardship (PH)
+- Probability of Default (PD)
+- Loss Given Default (LGD)
+
 **Variable Definitions** 
 
 ## Hardship & Payment Plan Variables
