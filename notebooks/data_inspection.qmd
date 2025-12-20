@@ -134,6 +134,17 @@ have formally approved or a hardship was cancelled early, so this project
 will trust that the official designations for these cases is correct and 
 will not fill `hardship_flag` based on missing/nonmissing data.
 
+
+Hardship will be an outcome variable and not a predictor 
+variable for PD modeling. We are trying to model a borrower's risk of 
+defaulting on a loan at the time of applying, and because hardship is an 
+event that occurs post-application, there would be severe leakage if this 
+was included as a predictor. We will keep the individual hardship 
+variables in the dataset to see if there are any macroeconomic conditions 
+that increase risk of different types of hardship for the PH model. 
+Additionally, hardship will be a predictor in the LGD models.
+
+
 #### Debt Settlement Variables
 
 Again, there are the exact same number of missing values for all of the 
@@ -173,6 +184,10 @@ print(accepted["debt_settlement_flag"].value_counts().sort_index())
 The number of "No settlements", matches the number of missing values for 
 debt settlement variables, so the `debt_settlement_flag` variable is 
 consistent with the data.
+
+None of the debt settlement variables will be used in PD or PH modeling, 
+as these are also post-application events (these even occur after 
+deliquency). These variables will only be included in LGD models.
 
 #### Secondary Applicant/ Joint Loan Variables
 
@@ -236,7 +251,48 @@ print(accepted["application_type"].value_counts().sort_index())
 # create joint_flag variable
 accepted["joint_flag"] = (
 accepted["application_type"] == "Joint App").astype(int)
+
+# drop application_type (no longer needed)
+accepted = accepted.drop(columns=["application_type"])
 ```
+
+#### Deliquency and Credit History Timing Variables
+
+For each of these variables, missingness indicates that these events never 
+occurred for that borrower:
+
+-`mths_since_last_record` (~84% missing)
+-`mths_since_recent_bc_dlq` (~78%)
+-`mths_since_last_major_derog` (~74%)
+-`mths_since_recent_revol_delinq`(~67%)
+-`mths_since_last_delinq` (~51%)
+
+These are based on the primary applicant's history, so any deliquencies 
+that occurred for a secondary applicant appear under the joint loan 
+variables.
+
+We will create a flag variable for each of these columns (useful for 
+linear modeling later), and we'll fill the missing values with a sentinel 
+value of 999.
+
+```{python}
+mths_cols = [
+    "mths_since_last_record",
+    "mths_since_recent_bc_dlq",
+    "mths_since_last_major_derog",
+    "mths_since_recent_revol_delinq",
+    "mths_since_last_delinq"
+]
+
+# create flags + fill sentinel value
+for col in mths_cols:
+    # flag: 1 if event ever occurred, 0 otherwise
+    accepted[f"{col}_flag"] = accepted[col].notna().astype(int)
+    
+    # sentinel value for "never occurred"
+    accepted[col] = accepted[col].fillna(999)
+```
+
 
 
 ## Data Cleaning
