@@ -31,10 +31,11 @@ accepted = pd.read_csv(
     low_memory=False
 )
 
-rejected = pd.read_csv(
-    DATA_DIR / "rejected_2007_to_2018Q4.csv.gz",
-    low_memory=False
-)
+#comment out for now
+#rejected = pd.read_csv(
+#    DATA_DIR / "rejected_2007_to_2018Q4.csv.gz",
+#    low_memory=False
+#)
 
 accepted.shape, rejected.shape
 ```
@@ -611,6 +612,134 @@ missing_summary = (
 )
 
 missing_summary
+```
+
+For the remaining variables, missingness can be explained in the 
+following ways:
+
+-`bc_util`: no bankcard, can be filled with 0s
+-`percent_bc_gt_75`: no bankcard, can be filled with 0s
+-`bc_open_to_buy`: no bankcard, can be filled with 0s
+-`mths_since_recent_bc`: no bankcard, can be filled with 0s
+-`pct_tl_nvr_dlq`: data collection error, can be dropped 
+-`avg_cur_bal`: data collection error, can be dropped 
+-`num_rev_accts`: data collection error, can be dropped 
+
+```{python}
+# fill 0s for no bankcard variables
+credit_zero_cols = [
+    "bc_util",
+    "percent_bc_gt_75",
+    "bc_open_to_buy",
+    "mths_since_recent_bc"
+]
+accepted[credit_zero_cols] = accepted[credit_zero_cols].fillna(0)
+
+# drop rows for data collection errors
+accepted = accepted.dropna(
+    subset=["pct_tl_nvr_dlq", "avg_cur_bal", "num_rev_accts"]
+)
+```
+
+#### Payment and Outcome Variables (Post-Origination)
+
+```{python}
+cols = [
+    "last_pymnt_d",
+    "next_pymnt_d",
+    "last_pymnt_amnt",
+    "recoveries",
+    "collection_recovery_fee",
+    "total_rec_prncp",
+    "total_rec_int",
+    "total_rec_late_fee"
+]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+print(missing_summary)
+```
+
+Where `next_pyment_d` is missing, this indicates a completed loan. 
+`last_pyment_d` missing likely indicates a newly issued load (as of the 
+publication of the data), so these will be dropped since they will not be 
+useful for modeling. The rest of the payment variables do not have any 
+missing values.
+
+```{python}
+# drop rows where next and last payment is missing
+accepted = accepted.drop(columns=["next_pymnt_d", "last_pymnt_d"])
+```
+
+#### Administrative and Origination Variables
+
+```{python}
+cols = [
+    "zip_code",
+    "loan_amnt",
+    "funded_amnt",
+    "funded_amnt_inv",
+    "term",
+    "purpose",
+    "issue_d",
+    "loan_status"
+]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+print(missing_summary)
+```
+
+`zip_code` will not be useful for modeling, so we can drop this column. We 
+should look at the status of the loans in the dataset:
+
+```{python}
+accepted["loan_status"].value_counts().sort_index()
+```
+
+We will create a binary variable called `current_flag` to classify loans 
+as current (1) or finished (0), meaning it was paid off or the borrower 
+defaulted.
+
+```{python}
+# list of active statuses
+active_statuses = [
+    "Current",
+    "In Grace Period",
+    "Late (16-30 days)",
+    "Late (31-120 days)"
+]
+
+# current = 1 if active, 0 if not
+accepted["current_flag"] = (
+    accepted["loan_status"].isin(active_statuses).astype(int))
+
+```
+
+We will also create a variable called `default`, where 1 means the 
+borrower either defaulted or the loan was charged off, and 0 means 
+the loan was either paid back in full or is still active (including late 
+or in grace period).
+
+```{python}
+default_statuses = ["Charged Off", "Default"]
+
+accepted["default"] = (
+    accepted["loan_status"].isin(default_statuses).astype(int))
 ```
 
 ## Data Cleaning
