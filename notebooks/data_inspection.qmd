@@ -48,6 +48,8 @@ accepted = accepted.drop(columns=["id", "member_id", "url"])
 ### Inspecting Missingness
 
 ```{python}
+pd.options.display.float_format = "{:.4f}".format
+
 missing_summary = (
     accepted
     .isna()
@@ -256,6 +258,11 @@ accepted["application_type"] == "Joint App").astype(int)
 accepted = accepted.drop(columns=["application_type"])
 ```
 
+`joint_flag` will be used as a predictor for all of the PH, PD, and LGD 
+models, while `annual_inc_joint`, `dti_joint`, and some of the `sec_app_*` 
+variables will only be used as predictors in the LGD model.
+
+
 #### Deliquency and Credit History Timing Variables
 
 For each of these variables, missingness indicates that these events never 
@@ -293,7 +300,318 @@ for col in mths_cols:
     accepted[col] = accepted[col].fillna(999)
 ```
 
+The deliquency variables will be used as predictors in for all PH, PD, and 
+LGD models, with both the flag variables and actual values being used for 
+all models (linear and non-linear).
 
+#### Borrower Description Field
+
+~94% of `desc` is missing, so we will just drop it from the dataset.
+
+```{python}
+accepted = accepted.drop(columns=["desc"])
+```
+
+#### Credit Utilization and Recent Credit Activity Variables
+
+The following variables give enhanced information on borrower's credit:
+
+-`il_util`
+-`all_util`
+-`open_acc_6m`
+-`inq_last_12m`
+-`total_cu_tl`
+-`open_il_24m`
+-`open_il_12m`
+-`open_act_il`
+-`max_bal_bc`
+-`inq_fi`
+-`total_bal_il`
+-`open_rv_24m`
+-`open_rv_12m`
+
+```{python}
+# create list of util variables
+cols_util = [
+    "il_util",
+    "all_util",
+    "open_acc_6m",
+    "inq_last_12m",
+    "total_cu_tl",
+    "open_il_24m",
+    "open_il_12m",
+    "open_act_il",
+    "max_bal_bc",
+    "inq_fi",
+    "total_bal_il",
+    "open_rv_24m",
+    "open_rv_12m"
+]
+
+# print missingness
+missing_summary = (
+    accepted[cols_util]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "missing_count", "mean": "missing_proportion"})
+)
+
+print(missing_summary)
+```
+
+`il_util` is missing roughly 47% while the others are all missing around 
+38%. Let's check for coincidence:
+
+```{python}
+exclude = {"all_util", "il_util", "open_acc_6m", "inq_last_12m", "total_cu_tl"}
+cols_util_2 = [c for c in cols_util if c not in exclude]
+
+# Rows where the FIRST variable is missing
+rows_missing = accepted[cols_util_2[0]].isna()
+
+# Check if all other variables are missing in exactly the same rows
+all_coincident = accepted.loc[rows_missing, cols_util_2].isna().all().all()
+
+print(all_coincident)
+```
+
+Missing values are all coincident (with the exception of one row for 
+`open_acc_6m`, `inq_last_12m`, and `total_cu_tl`). Since `il_util` is 
+missing more values while the others are all coincident, this means that not all borrowers have installment loans.
+
+```{python}
+# Drop one row with missing value for the 3 variables where others aren't
+drop_mask = (
+    accepted["open_acc_6m"].isna() &
+    accepted["inq_last_12m"].isna() &
+    accepted["total_cu_tl"].isna() &
+    accepted[cols_util_2].notna().all(axis=1)
+)
+
+# Confirm it's exactly one row
+drop_mask.sum()
+accepted = accepted.loc[~drop_mask].copy()
+```
+
+We can check if the missing values are associated with when the loan 
+application was filed:
+
+```{python}
+import matplotlib.pyplot as plt
+
+# ensure issue_d is datetime, extract year
+accepted["issue_d"] = pd.to_datetime(accepted["issue_d"])
+accepted["issue_year"] = accepted["issue_d"].dt.year
+
+# missingness rate
+missing_rate_by_year = (
+    accepted
+    .groupby("issue_year")["inq_fi"]
+    .apply(lambda x: x.isna().mean())
+)
+
+# loan volume
+loan_counts = accepted.groupby("issue_year").size()
+
+#plot
+fig, ax1 = plt.subplots()
+
+line1, = ax1.plot(
+    missing_rate_by_year,
+    marker="o",
+    label="Missingness Rate"
+)
+ax1.set_ylabel("Missingness Rate")
+ax1.set_xlabel("Issue Year")
+
+ax2 = ax1.twinx()
+line2, = ax2.plot(
+    loan_counts,
+    linestyle="--",
+    label="Loan Count"
+)
+ax2.set_ylabel("Loan Count")
+
+# legend
+lines = [line1, line2]
+labels = [line.get_label() for line in lines]
+ax1.legend(
+    lines,
+    labels,
+    loc="center left"
+)
+
+ax1.set_title(
+    "Missingness Rate of Credit Utilization Variables vs Loan Volume by Year")
+plt.show()
+```
+
+From this graph, we can see that most of the loans in the dataset were 
+issued from the period of 2014-2018, and the credit utilization data was 
+only collected from 2016 onwards. This insight will guide modeling 
+decisions later.
+
+#### Employment and Income Variables
+
+```{python}
+cols = ["emp_title", "emp_length", "annual_inc"]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+)
+
+print(missing_summary)
+```
+
+There are only 4 missing values for `annual_inc` and only 6.5% of rows 
+are missing `emp_length`. We will safely drop the rows where either of the 
+two are missing, as our sample size is still large enough and there is 
+such a small proportion of observations missing these values. We will also 
+drop the `emp_title` variable entirely, as it will not be useful for 
+modeling.
+
+```{python}
+# drop emp_title column
+accepted = accepted.drop(columns=["emp_title"])
+
+# drop rows where emp_length is missing
+accepted = accepted.dropna(subset=["emp_length"])
+
+# drop rows where annual_inc is missing
+accepted = accepted.dropna(subset=["annual_inc"])
+```
+
+#### Credit Account Counts and Balances
+
+```{python}
+cols = [
+    "num_tl_120dpd_2m",
+    "mo_sin_old_il_acct",
+    "bc_util",
+    "percent_bc_gt_75",
+    "bc_open_to_buy",
+    "mths_since_recent_bc",
+    "pct_tl_nvr_dlq",
+    "avg_cur_bal",
+    "mo_sin_rcnt_rev_tl_op",
+    "num_rev_accts",
+    "mo_sin_old_rev_tl_op",
+    "num_op_rev_tl",
+    "tot_coll_amt",
+    "num_actv_rev_tl",
+    "total_rev_hi_lim",
+    "tot_cur_bal",
+    "num_tl_30dpd",
+    "num_actv_bc_tl",
+    "num_accts_ever_120_pd",
+    "num_rev_tl_bal_gt_0",
+    "mo_sin_rcnt_tl",
+    "num_tl_90g_dpd_24m",
+    "tot_hi_cred_lim",
+    "total_il_high_credit_limit",
+    "num_il_tl",
+    "num_tl_op_past_12m",
+    "num_bc_tl",
+    "num_bc_sats",
+    "num_sats",
+    "total_bal_ex_mort",
+    "mort_acc",
+    "acc_open_past_24mths",
+    "total_bc_limit"
+]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+missing_summary
+```
+
+For `num_tl_120dpd_2m` and `mo_sin_old_il_acct`, missingness indicates 
+0 accounts overdue and no prior installment loan, respectively. We can 
+missing values with 0 for the former, and we'll create a flag variable 
+for the latter while also filling missing values with a neutral value. 
+This preserves these observations while maintaining interpretability 
+for modeling.
+
+```{python}
+accepted["num_tl_120dpd_2m"] = (
+    accepted["num_tl_120dpd_2m"]
+    .fillna(0)
+)
+
+# create flag variable for presence/absence of prior installment loan
+accepted["mo_sin_old_il_acct_missing"] = (
+    accepted["mo_sin_old_il_acct"].isna().astype(int)
+)
+
+# fill missing values with neutral value of 0
+accepted["mo_sin_old_il_acct"] = (
+    accepted["mo_sin_old_il_acct"]
+    .fillna(0)
+)
+
+```
+
+We'll check if the missing values of all the variables with exactly 68,211 
+missing values are conincident.
+
+```{python}
+# columns with exactly 68,211 missing values
+cols_68211 = accepted.isna().sum().eq(68211)
+
+# subset to those columns
+cols_68211 = cols_68211[cols_68211].index
+
+# check for coincidence
+is_coincident = accepted[cols_68211].isna().all(axis=1).sum() == 68211
+
+print(is_coincident)
+```
+
+The missingness of these variables is coincident, and since they only make 
+up ~3% of observations, we will drop these from the dataset for simplicity.
+
+```{python}
+cols_68211 = accepted.isna().sum().eq(68211)
+cols_68211 = cols_68211[cols_68211].index
+
+# Drop rows where all of these variables are missing
+accepted = accepted.dropna(subset=cols_68211)
+```
+
+
+```{python}
+cols = [
+    "bc_util", 
+    "percent_bc_gt_75", 
+    "bc_open_to_buy", 
+    "mths_since_recent_bc", 
+    "pct_tl_nvr_dlq", 
+    "avg_cur_bal", 
+    "num_rev_accts"]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+missing_summary
+```
 
 ## Data Cleaning
 
