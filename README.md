@@ -158,3 +158,28 @@ This project will model the following three systems:
 - `purpose`: Stated purpose of the loan.
 - `issue_d`: Month and year the loan was issued.
 - `loan_status`: Current status of the loan (e.g., fully paid, charged off).
+
+## Loan Pricing and Risk Grade Variables
+
+-`int_rate`: Interest rate assigned to the loan at origination, expressed 
+as a percentage.
+-`installment`: Monthly payment amount owed by the borrower, calculated 
+based on the loan amount, interest rate, and repayment term.
+-`grade`: LendingClub-assigned credit grade for the loan (A–G), reflecting 
+the borrower’s overall credit risk at origination.
+-`sub_grade`: Finer-grained risk classification within each grade (e.g., 
+A1–A5, B1–B5), providing additional risk stratification.
+-`initial_list_status`: Initial listing status of the loan, indicating 
+whether the loan was offered as a whole loan (W) or fractionalized for 
+individual investors (F).
+-`pymnt_plan`: Indicator of whether a payment plan was in place at 
+origination. Typically n for no payment plan.
+
+## Borrower Credit Score Variables
+-`fico_range_low`: Lower bound of the borrower’s FICO credit score range 
+at the time of loan origination.
+-`fico_range_high`: Upper bound of the borrower’s FICO credit score range 
+at the time of loan origination.
+-`earliest_cr_line`: Date of the borrower’s earliest reported credit line, 
+representing the length of the borrower’s credit history.
+
