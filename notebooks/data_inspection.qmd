@@ -37,10 +37,11 @@ accepted = pd.read_csv(
 #    low_memory=False
 #)
 
-accepted.shape, rejected.shape
+accepted.shape
+#rejected.shape
 ```
 
-### Drop unnecessary columns from accepted and rejected
+### Drop unnecessary columns from accepted
 ```{python}
 accepted = accepted.drop(columns=["id", "member_id", "url"])
 ```
@@ -153,12 +154,13 @@ Additionally, hardship will be a predictor in the LGD models.
 Again, there are the exact same number of missing values for all of the 
 debt settlement variables (2,226,422):
 
--`settlement_status`
--`debt_settlement_flag_date`
--`settlement_date`
--`settlement_amount`
--`settlement_term`
--`settlement_percentage`
+- `settlement_status`
+- `debt_settlement_flag`
+- `debt_settlement_flag_date`
+- `settlement_date`
+- `settlement_amount`
+- `settlement_term`
+- `settlement_percentage`
 
 We will once again check for coincidence:
 
@@ -274,6 +276,15 @@ occurred for that borrower:
 -`mths_since_last_major_derog` (~74%)
 -`mths_since_recent_revol_delinq`(~67%)
 -`mths_since_last_delinq` (~51%)
+- `collections_12_mths_ex_med` ??????? COME BACK ???
+- `acc_now_delinq` COME BACK
+- `chargeoff_within_12_mths` COME BACK
+- `delinq_amnt` COME BACK
+- `mths_since_recent_bc` COME BACK
+- `mths_since_recent_inq` COME BACK
+- `pub_rec_bankruptcies` COME BACK
+- `tax_liens` COME BACK
+
 
 These are based on the primary applicant's history, so any deliquencies 
 that occurred for a secondary applicant appear under the joint loan 
@@ -289,7 +300,7 @@ mths_cols = [
     "mths_since_recent_bc_dlq",
     "mths_since_last_major_derog",
     "mths_since_recent_revol_delinq",
-    "mths_since_last_delinq"
+    "mths_since_last_delinq",
 ]
 
 # create flags + fill sentinel value
@@ -303,7 +314,9 @@ for col in mths_cols:
 
 The deliquency variables will be used as predictors in for all PH, PD, and 
 LGD models, with both the flag variables and actual values being used for 
-all models (linear and non-linear).
+all models (linear and non-linear). `delinq_2yrs`, `acc_now_delinq`
+`collections_12_mths_ex_med`, `chargeoff_within_12_mths`, and 
+`delinq_amnt` will remain as-is.
 
 #### Borrower Description Field
 
@@ -346,7 +359,7 @@ cols_util = [
     "inq_fi",
     "total_bal_il",
     "open_rv_24m",
-    "open_rv_12m"
+    "open_rv_12m",
 ]
 
 # print missingness
@@ -491,6 +504,11 @@ accepted = accepted.dropna(subset=["annual_inc"])
 
 ```{python}
 cols = [
+    "open_acc",
+    "pub_rec",
+    "revol_bal",
+    "revol_util",
+    "total_acc",
     "num_tl_120dpd_2m",
     "mo_sin_old_il_acct",
     "bc_util",
@@ -543,7 +561,8 @@ For `num_tl_120dpd_2m` and `mo_sin_old_il_acct`, missingness indicates
 missing values with 0 for the former, and we'll create a flag variable 
 for the latter while also filling missing values with a neutral value. 
 This preserves these observations while maintaining interpretability 
-for modeling.
+for modeling. We can also fill missing `revol_util` values with 0, as this 
+indicates the borrower has no revolving credit accounts.
 
 ```{python}
 accepted["num_tl_120dpd_2m"] = (
@@ -562,6 +581,8 @@ accepted["mo_sin_old_il_acct"] = (
     .fillna(0)
 )
 
+# fill missing revol_util with 0s
+accepted["revol_util"] = accepted["revol_util"].fillna(0)
 ```
 
 We'll check if the missing values of all the variables with exactly 68,211 
@@ -652,7 +673,8 @@ cols = [
     "collection_recovery_fee",
     "total_rec_prncp",
     "total_rec_int",
-    "total_rec_late_fee"
+    "total_rec_late_fee",
+    "out_prncp"
 ]
 
 missing_summary = (
@@ -689,7 +711,8 @@ cols = [
     "term",
     "purpose",
     "issue_d",
-    "loan_status"
+    "loan_status",
+    "addr_state"
 ]
 
 missing_summary = (
@@ -708,6 +731,7 @@ print(missing_summary)
 should look at the status of the loans in the dataset:
 
 ```{python}
+accepted = accepted.drop(columns=["zip_code"])
 accepted["loan_status"].value_counts().sort_index()
 ```
 
@@ -742,23 +766,194 @@ accepted["default"] = (
     accepted["loan_status"].isin(default_statuses).astype(int))
 ```
 
+Lastly, we will map each state to a region to lower its cardinality for 
+modeling.
+
+```{python}
+state_to_region = {
+    # Northeast
+    "CT": "Northeast", "ME": "Northeast", "MA": "Northeast", "NH": "Northeast",
+    "RI": "Northeast", "VT": "Northeast", "NJ": "Northeast", "NY": "Northeast",
+    "PA": "Northeast",
+
+    # Midwest
+    "IL": "Midwest", "IN": "Midwest", "MI": "Midwest", "OH": "Midwest",
+    "WI": "Midwest", "IA": "Midwest", "KS": "Midwest", "MN": "Midwest",
+    "MO": "Midwest", "NE": "Midwest", "ND": "Midwest", "SD": "Midwest",
+
+    # South
+    "DE": "South", "FL": "South", "GA": "South", "MD": "South",
+    "NC": "South", "SC": "South", "VA": "South", "WV": "South",
+    "AL": "South", "KY": "South", "MS": "South", "TN": "South",
+    "AR": "South", "LA": "South", "OK": "South", "TX": "South",
+    "DC": "South",
+
+    # West
+    "AZ": "West", "CO": "West", "ID": "West", "MT": "West",
+    "NV": "West", "NM": "West", "UT": "West", "WY": "West",
+    "AK": "West", "CA": "West", "HI": "West", "OR": "West", "WA": "West"
+}
+
+# Map and drop addr_state
+accepted["region"] = accepted["addr_state"].map(state_to_region)
+accepted = accepted.drop(columns=["addr_state"])
+
+```
+
+#### Loan Pricing and Risk Grade Variables
+
+```{python}
+cols = [
+    "int_rate",
+    "installment",
+    "grade",
+    "sub_grade",
+    "initial_list_status",
+    "pymnt_plan"
+]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+print(missing_summary)
+```
+
+There are not any missing values for the loan pricing variables.
+
+#### Borrower Credit Score Variables
+
+```{python}
+cols = [
+    "fico_range_low",
+    "fico_range_high",
+    "earliest_cr_line"
+]
+
+missing_summary = (
+    accepted[cols]
+    .isna()
+    .agg(["sum", "mean"])
+    .T
+    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+    .sort_values("prop_missing", ascending=False)
+)
+
+print(missing_summary)
+```
+
+There are also not any missing values for the credit score variables.
+
 ## Data Cleaning
 
 ```{python}
+# change term to numbers only
 accepted["term"] = (
     accepted["term"]
     .str.replace(" months", "", regex=False)
     .astype(int)
 )
 
+# Change emp_length to numbers only
 accepted["emp_length"] = (
     accepted["emp_length"]
-    .str.replace("+ years", "", regex=False)
+    .str.replace("10\\+ years", "10", regex=True)
+    .str.replace("< 1 year", "0", regex=False)
+    .str.replace(" years", "", regex=False)
+    .str.replace(" year", "", regex=False)
+)
+accepted["emp_length"] = accepted["emp_length"].astype(int)
+
+
+# Create verificaiton flag variable, drop verification_status
+accepted["verified_flag"] = (
+    accepted["verification_status"]
+    .isin(["Verified", "Source Verified"])
     .astype(int)
 )
+accepted = accepted.drop(columns=["verification_status"])
+
+# Drop title column
+accepted = accepted.drop(columns=["title"])
+
+# Make earliest_cr_line a datetime
+accepted["earliest_cr_line"] = pd.to_datetime(
+    accepted["earliest_cr_line"],
+    format="%b-%Y",
+    errors="coerce"
+)
+
+# encode initial_list_status as 1 (whole) or 0 (fractionalized)
+accepted["whole_loan_flag"] = (accepted["initial_list_status"] == "w").astype(int)
+accepted = accepted.drop(columns=["initial_list_status"])
+
+# drop out_prncp_inv, total_pyment, total_pyment_inv
+accepted = accepted.drop(
+    columns=["out_prncp_inv",
+    "total_pymnt",
+    "total_pymnt_inv"])
+
+# drop post-origination credit check variables
+accepted = accepted.drop(
+    columns=["last_credit_pull_d", "last_fico_range_low", "last_fico_range_high"]
+)
+
+# drop policy code column
+accepted = accepted.drop(columns=["policy_code"])
+
+# create verification flag JOINT variable, drop verification_status_joint
+accepted["verified_flag_joint"] = (
+    accepted["verification_status_joint"]
+    .isin(["Verified", "Source Verified"])
+    .astype(int)
+)
+accepted = accepted.drop(columns=["verification_status_joint"])
+
+# Make sec_app_earliest_cr_line a datetime
+accepted["sec_app_earliest_cr_line"] = pd.to_datetime(
+    accepted["earliest_cr_line"],
+    format="%b-%Y",
+    errors="coerce"
+)
+
+# Change hardship_flag to binary (1 = hardship, 0 = no hardship)
+accepted["hardship_flag"] = (accepted["hardship_flag"] == "Y").astype(int)
+
+# Drop hardship_type
+accepted = accepted.drop(columns=["hardship_type"])
+
+# Drop hardship_length -> always 3 months
+accepted = accepted.drop(columns=["hardship_length"])
+
+# Drop disbursement_method
+accepted = accepted.drop(columns=["disbursement_method"])
+
+# change date cols to datetime
+date_cols = [
+    "hardship_start_date",
+    "hardship_end_date",
+    "payment_plan_start_date",
+    "debt_settlement_flag_date",
+    "settlement_date"
+]
+
+for col in date_cols:
+    accepted[col] = pd.to_datetime(
+        accepted[col],
+        format="%b-%Y",
+        errors="coerce"
+    )
+
+
+# Change debt_settlement_flag to binary (1 = settlement, 0 = nonee)
+accepted["debt_settlement_flag"] = (
+    accepted["debt_settlement_flag"] == "Y").astype(int)
 ```
 
 
-```{python}
-accepted["hardship_status"].value_counts(dropna=False).sort_index()
-```
+
