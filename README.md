@@ -20,7 +20,7 @@ This project will model the following three systems:
 - Probability of Default (PD)
 - Loss Given Default (LGD)
 
-**Variable Definitions** 
+# Variable Definitions
 
 ## Hardship & Payment Plan Variables
 
@@ -57,6 +57,8 @@ deferral, reduced payment).
 ## Debt Settlement Variables
 
 - `settlement_status`: Current status of a debt settlement agreement.
+- `debt_settlement_flag`: Indicator of whether the loan is in debt 
+settlement.
 - `debt_settlement_flag_date`: Date when the loan was flagged as being in 
 debt settlement.
 - `settlement_date`: Date the debt settlement agreement was finalized.
@@ -229,6 +231,7 @@ collections.
 - `issue_d`: Month and year the loan was issued.
 - `loan_status`: Current status of the loan (e.g., fully paid, charged 
 off).
+- `addr_state`: State where the borrower resides.
 
 ## Loan Pricing and Risk Grade Variables
 

@@ -31,7 +31,7 @@ accepted = pd.read_csv(
     low_memory=False
 )
 
-#comment out for now
+# rejected loan data (load if needed later)
 #rejected = pd.read_csv(
 #    DATA_DIR / "rejected_2007_to_2018Q4.csv.gz",
 #    low_memory=False
@@ -52,21 +52,37 @@ accepted = accepted.drop(columns=["id", "member_id", "url"])
 ```{python}
 pd.options.display.float_format = "{:.4f}".format
 
-missing_summary = (
-    accepted
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
+# create function to print missingness for each category of variables
+def print_missing(cols):
 
-missing_summary
+    missing_summary = (
+        cols
+        .isna()
+        .agg(["sum", "mean"])
+        .T
+        .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
+        .sort_values("prop_missing", ascending=False)
+    )
+
+    missing_summary["n_missing"] = missing_summary["n_missing"].astype(int)
+
+    # do not truncate output
+    with pd.option_context(
+        "display.max_rows", None,
+        "display.max_columns", None,
+        "display.width", None,
+        "display.float_format", "{:.4f}".format
+    ):
+
+        return missing_summary
+
+print_missing(accepted)
 ```
 
 
-Many rows have exactly 33 missing values, so we'll check if these are 
-really just the same 33 rows that are without data.
+As an initial observation, many rows have exactly 33 missing values, so 
+we'll check if these are really just the same 33 rows that are without 
+data.
 
 
 ```{python}
@@ -76,11 +92,39 @@ rows_33 = accepted[cols_33[0]].isna()
 same_rows = accepted.loc[rows_33, cols_33].isna().all().all()
 
 # print a preview of the rows with all these values missing and drop them
-accepted.loc[rows_33].head()
+same_rows
+```
+
+They do in fact coincide, so we'll drop these rows.
+
+```{python}
+# drop rows with missing data
 accepted = accepted.loc[~rows_33].copy()
 ```
 
 #### Hardship Variables
+
+```{python}
+cols = [
+    "orig_projected_additional_accrued_interest",
+    "hardship_payoff_balance_amount",
+    "payment_plan_start_date",
+    "hardship_last_payment_amount",
+    "hardship_status",
+    "hardship_flag",
+    "hardship_start_date",
+    "deferral_term",
+    "hardship_amount",
+    "hardship_dpd",
+    "hardship_loan_status",
+    "hardship_length",
+    "hardship_end_date",
+    "hardship_reason",
+    "hardship_type"
+]
+
+print_missing(accepted[cols])
+```
 
 The following hardship variables all have the same number of missing 
 values:
@@ -111,7 +155,7 @@ rows_non_missing = accepted[cols_hardship_missing[0]].notna()
 # check if ALL other columns are also non-missing in EXACTLY those rows
 same_rows = (
 accepted.loc[rows_non_missing, cols_hardship_missing].notna().all().all())
-print(same_rows)
+same_rows
 ```
 
 These are all, in fact, coincident, meaning a missing value means an 
@@ -135,33 +179,72 @@ hardship variables, meaning there are roughly 10,000 cases where a row
 has data for hardship variables but was classified as "No hardship". This 
 difference can be explained by the fact that some hardship cases may not 
 have formally approved or a hardship was cancelled early, so this project 
-will trust that the official designations for these cases is correct and 
-will not fill `hardship_flag` based on missing/nonmissing data.
+will fill `hardship_flag` as Y if there is data for these hardship 
+variables and keep it as 'N' if there is no data (overruling original 
+`hardship_flag` designation)
 
+```{python}
+import numpy as np
 
-Hardship will be an outcome variable and not a predictor 
-variable for PD modeling. We are trying to model a borrower's risk of 
+hardship_detail_cols = [
+    "orig_projected_additional_accrued_interest",
+    "hardship_payoff_balance_amount",
+    "payment_plan_start_date",
+    "hardship_last_payment_amount",
+    "hardship_status",
+    "hardship_start_date",
+    "deferral_term",
+    "hardship_amount",
+    "hardship_dpd",
+    "hardship_loan_status",
+    "hardship_length",
+    "hardship_end_date",
+    "hardship_reason",
+    "hardship_type"
+]
+
+# fill as Y if there is hardship data, keep as N if not
+accepted["hardship_flag"] = np.where(
+    accepted[hardship_detail_cols].notna().any(axis=1),
+    "Y",
+    "N"
+)
+
+print(accepted["hardship_flag"].value_counts().sort_index())
+```
+
+Now there are ~11,000 hardship cases, which will make modeling easier 
+later on.
+
+Hardship will not be a predictor 
+variable for PD modeling. We are trying to predict a borrower's risk of 
 defaulting on a loan at the time of applying, and because hardship is an 
 event that occurs post-application, there would be severe leakage if this 
 was included as a predictor. We will keep the individual hardship 
 variables in the dataset to see if there are any macroeconomic conditions 
 that increase risk of different types of hardship for the PH model. 
-Additionally, hardship will be a predictor in the LGD models.
+Additionally, hardship will be a predictor in the LGD models, as hardship 
+is an event that occurs before defaulting.
 
 
 #### Debt Settlement Variables
 
-Again, there are the exact same number of missing values for all of the 
-debt settlement variables (2,226,422):
+```{python}
+cols = [
+    "settlement_status",
+    "debt_settlement_flag",
+    "debt_settlement_flag_date",
+    "settlement_date",
+    "settlement_amount",
+    "settlement_term",
+    "settlement_percentage"
+]
 
-- `settlement_status`
-- `debt_settlement_flag`
-- `debt_settlement_flag_date`
-- `settlement_date`
-- `settlement_amount`
-- `settlement_term`
-- `settlement_percentage`
+print_missing(accepted[cols])
+```
 
+Again, all of the debt settlement variables exlcuding 
+`debt_settlement_flag` have the same number of missing values (2,226,422).
 We will once again check for coincidence:
 
 ```{python}
@@ -178,7 +261,7 @@ print(same_rows)
 ```
 
 Here, missingness just means no settlement occurred, meaning the borrower 
-did not default at all. Present data in these rows means that the borrower 
+did not ever default. Present data in these rows means that the borrower 
 defaulted badly enough to negotiate a payment less than the amount that 
 was originally owed.
 
@@ -196,6 +279,29 @@ deliquency). These variables will only be included in LGD models.
 
 #### Secondary Applicant/ Joint Loan Variables
 
+```{python}
+cols = [
+    "sec_app_mths_since_last_major_derog",
+    "sec_app_revol_util",
+    "revol_bal_joint",
+    "sec_app_open_acc",
+    "sec_app_num_rev_accts",
+    "sec_app_inq_last_6mths",
+    "sec_app_mort_acc",
+    "sec_app_open_act_il",
+    "sec_app_fico_range_low",
+    "sec_app_fico_range_high",
+    "sec_app_chargeoff_within_12_mths",
+    "sec_app_collections_12_mths_ex_med",
+    "sec_app_earliest_cr_line",
+    "verification_status_joint",
+    "dti_joint",
+    "annual_inc_joint"
+]
+
+print_missing(accepted[cols])
+```
+
 The following secondary applicant/ joint loan variables all have the same number of missing values (2,152,647):
 
 -`sec_app_revol_util`
@@ -211,7 +317,7 @@ The following secondary applicant/ joint loan variables all have the same number
 -`sec_app_collections_12_mths_ex_med`
 -`sec_app_earliest_cr_line`
 
-These three variables have different numbers of missing values:
+These variables have different numbers of missing values:
 -`sec_app_mths_since_last_major_derog`
 -`sec_app_revol_util`
 -`revol_bal_joint`
@@ -219,7 +325,7 @@ These three variables have different numbers of missing values:
 -`dti_joint`
 -`annual_inc_joint`
 
-Checking for coincident for the first group:
+Checking for coincidence for the first group:
 ```{python}
 # check for coincidence
 cols_joint_missing = accepted.columns[accepted.isna().sum() == 2152647]
@@ -268,6 +374,27 @@ variables will only be used as predictors in the LGD model.
 
 #### Deliquency and Credit History Timing Variables
 
+```{python}
+cols = [
+    "mths_since_last_record",
+    "mths_since_recent_bc",
+    "mths_since_recent_bc_dlq",
+    "mths_since_recent_inq",
+    "mths_since_last_major_derog",
+    "mths_since_recent_revol_delinq",
+    "mths_since_last_delinq",
+    "delinq_2yrs",
+    "collections_12_mths_ex_med",
+    "acc_now_delinq",
+    "chargeoff_within_12_mths",
+    "delinq_amnt",
+    "pub_rec_bankruptcies",
+    "tax_liens"
+]
+
+print_missing(accepted[cols])
+```
+
 For each of these variables, missingness indicates that these events never 
 occurred for that borrower:
 
@@ -276,14 +403,6 @@ occurred for that borrower:
 -`mths_since_last_major_derog` (~74%)
 -`mths_since_recent_revol_delinq`(~67%)
 -`mths_since_last_delinq` (~51%)
-- `collections_12_mths_ex_med` ??????? COME BACK ???
-- `acc_now_delinq` COME BACK
-- `chargeoff_within_12_mths` COME BACK
-- `delinq_amnt` COME BACK
-- `mths_since_recent_bc` COME BACK
-- `mths_since_recent_inq` COME BACK
-- `pub_rec_bankruptcies` COME BACK
-- `tax_liens` COME BACK
 
 
 These are based on the primary applicant's history, so any deliquencies 
@@ -312,6 +431,37 @@ for col in mths_cols:
     accepted[col] = accepted[col].fillna(999)
 ```
 
+These variables, however, have present values for 0s but also have a small 
+proportion of missing data:
+- `collections_12_mths_ex_med` 
+- `acc_now_delinq` 
+- `chargeoff_within_12_mths` 
+- `delinq_amnt` 
+- `mths_since_recent_bc` 
+- `mths_since_recent_inq` 
+- `pub_rec_bankruptcies` 
+- `tax_liens` 
+- `delinq_2yrs`
+
+Because there is such a small fraction of missing values for these, we will assume that missingness is just representative of "did not occur", so 
+we'll fill these with 0s.
+
+```{python}
+cols = [
+    "collections_12_mths_ex_med",
+    "acc_now_delinq",
+    "chargeoff_within_12_mths",
+    "delinq_amnt",
+    "mths_since_recent_bc",
+    "mths_since_recent_inq",
+    "pub_rec_bankruptcies",
+    "tax_liens",
+    "delinq_2yrs"
+]
+
+accepted[cols] = accepted[cols].fillna(0)
+```
+
 The deliquency variables will be used as predictors in for all PH, PD, and 
 LGD models, with both the flag variables and actual values being used for 
 all models (linear and non-linear). `delinq_2yrs`, `acc_now_delinq`
@@ -319,6 +469,11 @@ all models (linear and non-linear). `delinq_2yrs`, `acc_now_delinq`
 `delinq_amnt` will remain as-is.
 
 #### Borrower Description Field
+
+```{python}
+cols = ['desc']
+print_missing(accepted[cols])
+```
 
 ~94% of `desc` is missing, so we will just drop it from the dataset.
 
@@ -330,24 +485,10 @@ accepted = accepted.drop(columns=["desc"])
 
 The following variables give enhanced information on borrower's credit:
 
--`il_util`
--`all_util`
--`open_acc_6m`
--`inq_last_12m`
--`total_cu_tl`
--`open_il_24m`
--`open_il_12m`
--`open_act_il`
--`max_bal_bc`
--`inq_fi`
--`total_bal_il`
--`open_rv_24m`
--`open_rv_12m`
-
 ```{python}
-# create list of util variables
-cols_util = [
+cols = [
     "il_util",
+    "mths_since_rcnt_il",
     "all_util",
     "open_acc_6m",
     "inq_last_12m",
@@ -359,27 +500,18 @@ cols_util = [
     "inq_fi",
     "total_bal_il",
     "open_rv_24m",
-    "open_rv_12m",
+    "open_rv_12m"
 ]
 
-# print missingness
-missing_summary = (
-    accepted[cols_util]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "missing_count", "mean": "missing_proportion"})
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 `il_util` is missing roughly 47% while the others are all missing around 
 38%. Let's check for coincidence:
 
 ```{python}
-exclude = {"all_util", "il_util", "open_acc_6m", "inq_last_12m", "total_cu_tl"}
-cols_util_2 = [c for c in cols_util if c not in exclude]
+exclude = {"all_util", "il_util", "open_acc_6m", "inq_last_12m", "total_cu_tl", "mths_since_rcnt_il"}
+cols_util_2 = [c for c in cols if c not in exclude]
 
 # Rows where the FIRST variable is missing
 rows_missing = accepted[cols_util_2[0]].isna()
@@ -391,12 +523,13 @@ print(all_coincident)
 ```
 
 Missing values are all coincident (with the exception of one row for 
-`open_acc_6m`, `inq_last_12m`, and `total_cu_tl`). Since `il_util` is 
-missing more values while the others are all coincident, this means that not all borrowers have installment loans.
+`open_acc_6m`, `inq_last_12m`, and `total_cu_tl` and 18 rows of 
+`all_util`). Since `il_util` is missing more values while the others are 
+all coincident, this means that not all borrowers have installment loans.
 
 ```{python}
 # Drop one row with missing value for the 3 variables where others aren't
-drop_mask = (
+mask_three_missing = (
     accepted["open_acc_6m"].isna() &
     accepted["inq_last_12m"].isna() &
     accepted["total_cu_tl"].isna() &
@@ -404,18 +537,29 @@ drop_mask = (
 )
 
 # Confirm it's exactly one row
-drop_mask.sum()
-accepted = accepted.loc[~drop_mask].copy()
+mask_three_missing.sum()
+accepted = accepted.loc[~mask_three_missing].copy()
 ```
 
-We can check if the missing values are associated with when the loan 
-application was filed:
+The missing `all_util` values will be filled with 0s, as these omissions 
+likely just represent an aggregate utilization rate of 0.
+```{python}
+accepted["all_util"] = accepted["all_util"].fillna(0)
+```
+
+We can check if the missing values of all the coincident variables are 
+associated with when the loan application was filed:
 
 ```{python}
 import matplotlib.pyplot as plt
 
 # ensure issue_d is datetime, extract year
-accepted["issue_d"] = pd.to_datetime(accepted["issue_d"])
+accepted["issue_d"] = pd.to_datetime(
+    accepted["issue_d"],
+    format="%b-%Y",
+    errors="coerce"
+)
+
 accepted["issue_year"] = accepted["issue_d"].dt.year
 
 # missingness rate
@@ -471,15 +615,7 @@ decisions later.
 ```{python}
 cols = ["emp_title", "emp_length", "annual_inc"]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 There are only 4 missing values for `annual_inc` and only 6.5% of rows 
@@ -544,16 +680,7 @@ cols = [
     "total_bc_limit"
 ]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-missing_summary
+print_missing(accepted[cols])
 ```
 
 For `num_tl_120dpd_2m` and `mo_sin_old_il_acct`, missingness indicates 
@@ -613,28 +740,6 @@ accepted = accepted.dropna(subset=cols_68211)
 ```
 
 
-```{python}
-cols = [
-    "bc_util", 
-    "percent_bc_gt_75", 
-    "bc_open_to_buy", 
-    "mths_since_recent_bc", 
-    "pct_tl_nvr_dlq", 
-    "avg_cur_bal", 
-    "num_rev_accts"]
-
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-missing_summary
-```
-
 For the remaining variables, missingness can be explained in the 
 following ways:
 
@@ -677,16 +782,7 @@ cols = [
     "out_prncp"
 ]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 Where `next_pyment_d` is missing, this indicates a completed loan. 
@@ -715,16 +811,7 @@ cols = [
     "addr_state"
 ]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 `zip_code` will not be useful for modeling, so we can drop this column. We 
@@ -797,7 +884,6 @@ state_to_region = {
 # Map and drop addr_state
 accepted["region"] = accepted["addr_state"].map(state_to_region)
 accepted = accepted.drop(columns=["addr_state"])
-
 ```
 
 #### Loan Pricing and Risk Grade Variables
@@ -812,16 +898,7 @@ cols = [
     "pymnt_plan"
 ]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 There are not any missing values for the loan pricing variables.
@@ -835,16 +912,7 @@ cols = [
     "earliest_cr_line"
 ]
 
-missing_summary = (
-    accepted[cols]
-    .isna()
-    .agg(["sum", "mean"])
-    .T
-    .rename(columns={"sum": "n_missing", "mean": "prop_missing"})
-    .sort_values("prop_missing", ascending=False)
-)
-
-print(missing_summary)
+print_missing(accepted[cols])
 ```
 
 There are also not any missing values for the credit score variables.
