@@ -492,6 +492,7 @@ cols = [
     "all_util",
     "open_acc_6m",
     "inq_last_12m",
+    "inq_last_6m",
     "total_cu_tl",
     "open_il_24m",
     "open_il_12m",
@@ -510,6 +511,9 @@ print_missing(accepted[cols])
 38%. Let's check for coincidence:
 
 ```{python}
+# drop the one row where inq_last_6m is missing
+accepted = accepted.loc[accepted["inq_last_6mths"].notna()].copy()
+
 exclude = {"all_util", "il_util", "open_acc_6m", "inq_last_12m", "total_cu_tl", "mths_since_rcnt_il"}
 cols_util_2 = [c for c in cols if c not in exclude]
 
@@ -613,17 +617,17 @@ decisions later.
 #### Employment and Income Variables
 
 ```{python}
-cols = ["emp_title", "emp_length", "annual_inc"]
+cols = ["emp_title", "emp_length", "annual_inc", "dti"]
 
 print_missing(accepted[cols])
 ```
 
-There are only 4 missing values for `annual_inc` and only 6.5% of rows 
-are missing `emp_length`. We will safely drop the rows where either of the 
-two are missing, as our sample size is still large enough and there is 
-such a small proportion of observations missing these values. We will also 
-drop the `emp_title` variable entirely, as it will not be useful for 
-modeling.
+There are only 4 missing values for `annual_inc`, 113 for `dti`, and only 
+6.5% of rows are missing `emp_length`. We will safely drop the rows where 
+either of the two are missing, as our sample size is still large enough 
+and there is such a small proportion of observations missing these values. 
+We will also drop the `emp_title` variable entirely, as it will not be 
+useful for modeling.
 
 ```{python}
 # drop emp_title column
@@ -634,6 +638,9 @@ accepted = accepted.dropna(subset=["emp_length"])
 
 # drop rows where annual_inc is missing
 accepted = accepted.dropna(subset=["annual_inc"])
+
+# drop rows where dti is missing
+accepted = accepted.dropna(subset=["dti"])
 ```
 
 #### Credit Account Counts and Balances
@@ -1022,6 +1029,4 @@ for col in date_cols:
 accepted["debt_settlement_flag"] = (
     accepted["debt_settlement_flag"] == "Y").astype(int)
 ```
-
-
 
