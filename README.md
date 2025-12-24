@@ -275,7 +275,7 @@ delinquency of any type.
 - `mo_sin_old_il_acct_missing`: Indicator of whether the borrower has 
 prior installment loans.
 - `current_flag`: Indicator of whether the loan is current.
-- `default`: Indicator of whether the loan has .
+- `default`: Indicator of whether the borrower has defaulted.
 - `region`: Region of the borrower's residence based on state.
 - `verified_flag`: Indicator of whether the borrower’s income was verified.
 - `verified_flag_joint`: Indicator of whether the borrower’s joint income 
