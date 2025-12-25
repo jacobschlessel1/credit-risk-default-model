@@ -138,6 +138,7 @@ credit report.
 opened.
 - `all_util`: Aggregate utilization rate across all credit accounts.
 - `open_acc_6m`: Number of open credit accounts in the past 6 months.
+- `inq_last_6m`: Number of credit inquiries in the past 6 months.
 - `inq_last_12m`: Number of credit inquiries in the past 12 months.
 - `total_cu_tl`: Number of currently utilized trade lines.
 - `open_il_24m`: Number of installment loans opened in the past 24 months.
@@ -283,6 +284,3 @@ was verified.
 - `whole_loan_flag`: Indicator of borrower whether the loan was offered as 
 a whole loan or fractionalized for individual investors.
 
-
-
-Note: only 781 active hardships based on hardship_flag, fill hardship flag as 1s by checking if hardship_status is present?
