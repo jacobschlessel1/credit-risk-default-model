@@ -10,8 +10,8 @@ execute:
 
 ## Purpose
 
-This notebook performs initial data inspection and exploratory analysis
-for the LendingClub credit risk dataset.
+This notebook performs initial data inspection for the LendingClub credit 
+risk dataset.
 
 ## Setup
 
@@ -302,7 +302,8 @@ cols = [
 print_missing(accepted[cols])
 ```
 
-The following secondary applicant/ joint loan variables all have the same number of missing values (2,152,647):
+The following secondary applicant/ joint loan variables all have the same 
+number of missing values (2,152,647):
 
 -`sec_app_revol_util`
 -`revol_bal_joint`
@@ -443,7 +444,8 @@ proportion of missing data:
 - `tax_liens` 
 - `delinq_2yrs`
 
-Because there is such a small fraction of missing values for these, we will assume that missingness is just representative of "did not occur", so 
+Because there is such a small fraction of missing values for these, we will 
+assume that missingness is just representative of "did not occur", so 
 we'll fill these with 0s.
 
 ```{python}
@@ -492,7 +494,7 @@ cols = [
     "all_util",
     "open_acc_6m",
     "inq_last_12m",
-    "inq_last_6m",
+    "inq_last_6mths",
     "total_cu_tl",
     "open_il_24m",
     "open_il_12m",
@@ -506,6 +508,8 @@ cols = [
 
 print_missing(accepted[cols])
 ```
+
+
 
 `il_util` is missing roughly 47% while the others are all missing around 
 38%. Let's check for coincidence:
@@ -1030,3 +1034,10 @@ accepted["debt_settlement_flag"] = (
     accepted["debt_settlement_flag"] == "Y").astype(int)
 ```
 
+```{python}
+# Save cleaned dataset to parquet file
+accepted.to_parquet(
+    "../data/processed/accepted_clean.parquet",
+    index=False
+)
+```
