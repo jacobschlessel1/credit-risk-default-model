@@ -1,0 +1,363 @@
+---
+title: "Exploratory Data Analysis"
+author: "Jacob Schlessel"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook performs exploratory data analysis for the accepted loan 
+data.
+
+## Setup
+
+```{python}
+import pandas as pd
+import matplotlib.pyplot as plt
+
+accepted = pd.read_parquet(
+    "../data/processed/accepted_clean.parquet",
+    engine="pyarrow"
+)
+
+
+plt.style.use("seaborn-v0_8")
+```
+
+
+## Exploring Loan Value
+
+```{python}
+import matplotlib.ticker as mtick
+
+
+fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(8, 10))
+
+# Loan Amount
+axes[0].hist(
+    accepted["loan_amnt"],
+    bins=40,
+    edgecolor="black",
+    linewidth=0.8
+)
+axes[0].set_title("Distribution of Loan Amount")
+axes[0].set_xlabel("Loan Amount ($)")
+axes[0].set_ylabel("Count")
+
+# Interest Rate
+axes[1].hist(
+    accepted["int_rate"],
+    bins=40,
+    edgecolor="black",
+    linewidth=0.8
+)
+axes[1].set_title("Distribution of Interest Rate")
+axes[1].set_xlabel("Interest Rate (%)")
+axes[1].set_ylabel("Count")
+
+# Annual Income
+upper = accepted["annual_inc"].quantile(0.999)
+axes[2].hist(
+    accepted["annual_inc"],
+    bins=40,
+    range=(0, upper),
+    edgecolor="black",
+    linewidth=0.8
+)
+axes[2].set_title("Distribution of Annual Income (≤ 99th Percentile)")
+axes[2].set_xlabel("Annual Income ($)")
+axes[2].set_ylabel("Count")
+
+plt.tight_layout()
+plt.show()
+```
+
+```{python}
+vars = [
+    "loan_amnt",
+    "int_rate",
+    "annual_inc"
+]
+
+percentiles = [0.25, 0.50, 0.75, 0.95, 0.99, 0.999]
+
+summary_table = (
+    accepted[vars]
+    .describe(percentiles=percentiles)
+    .loc[
+        ["min", "25%", "50%", "75%", "95%", "99%", "99.9%", "max"]
+    ]
+    .T
+)
+
+summary_table
+```
+
+Loans were granted ranging from $1000 to $40,000, with 75% 
+being less than $20,000. Interest rates varied from 4.85% all the way up 
+to 30.89%, with most being in the range of roughly 10% to 16%. There were 
+a quite a few outliers for `annual_inc`, with some invidiuals 
+reporting over tens of millions of dollars in annual income (not shown on 
+histogram), but most individuals made between 48,000 and $95,000 a year. 
+
+Because there are millions of observations in the dataset, we will 
+randomly sample 1,000 observations and create scatterplots to get a 
+general sense of some relationships:
+
+```{python}
+# Create FICO avg
+accepted["fico_avg"] = (
+    accepted["fico_range_low"] + accepted["fico_range_high"]
+) / 2
+
+# Random sample of 1000
+sample = accepted.sample(n=1000, random_state=42)
+
+# Cap annual income for visualization 
+inc_99 = accepted["annual_inc"].quantile(0.99)
+
+fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(8, 12))
+
+# Loan Amount vs Annual Income
+x = sample["annual_inc"].clip(upper=inc_99)
+y = sample["loan_amnt"]
+
+axes[0].scatter(x, y, alpha=0.4)
+coef = np.polyfit(x, y, 1)
+axes[0].plot(x, np.poly1d(coef)(x))
+
+axes[0].set_title("Loan Amount vs Annual Income (Sample of 1,000)")
+axes[0].set_xlabel("Annual Income ($)")
+axes[0].set_ylabel("Loan Amount ($)")
+
+# Loan Amount vs Interest Rate
+x = sample["int_rate"]
+y = sample["loan_amnt"]
+
+coef = np.polyfit(x, y, 1)
+axes[1].scatter(x, y, alpha=0.4)
+axes[1].plot(x, np.poly1d(coef)(x))
+
+axes[1].set_title("Loan Amount vs Interest Rate (Sample of 1,000)")
+axes[1].set_xlabel("Interest Rate (%)")
+axes[1].set_ylabel("Loan Amount ($)")
+
+# Loan Amount vs Average FICO 
+x = sample["fico_avg"]
+y = sample["loan_amnt"]
+
+coef = np.polyfit(x, y, 1)
+axes[2].scatter(x, y, alpha=0.4)
+axes[2].plot(x, np.poly1d(coef)(x))
+
+axes[2].set_title("Loan Amount vs Average FICO Score (Sample of 1,000)")
+axes[2].set_xlabel("Average FICO Score")
+axes[2].set_ylabel("Loan Amount ($)")
+
+plt.tight_layout()
+plt.show()
+```
+
+There appears to be a positive relationship between loan amount and annual 
+income, but no significant relationships between loan amount and either 
+interest rate or average FICO score.
+
+```{python}
+import matplotlib.pyplot as plt
+
+# Counts
+term_counts = accepted["term"].value_counts().sort_index()
+grade_counts = accepted["grade"].value_counts().sort_index()
+
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(12, 5))
+
+# Loan term
+axes[0].pie(
+    term_counts.values,
+    labels=term_counts.index.astype(str),
+    autopct="%1.1f%%",
+    startangle=90
+)
+axes[0].set_title("Loan Term Distribution (Months)")
+axes[0].axis("equal")  
+
+# Loan grade
+axes[1].bar(
+    grade_counts.index,
+    grade_counts.values
+)
+axes[1].set_title("Loan Grade Distribution")
+axes[1].set_xlabel("Grade")
+axes[1].set_ylabel("Number of Loans")
+
+plt.tight_layout()
+plt.show()
+```
+
+Most of the loans were for 36 month terms rather than 60 months, and many 
+of the loans were assigned grades of "C" or better upon lending.
+
+## Geographic Distribution of Loans
+
+```{python}
+loans_by_region = (
+    accepted
+    .groupby("region")
+    .size()
+    .reset_index(name="n_loans")
+    .sort_values("n_loans", ascending=False)
+)
+
+plt.figure(figsize=(7, 7))
+plt.pie(
+    loans_by_region["n_loans"],
+    labels=loans_by_region["region"],
+    autopct="%1.1f%%",
+    startangle=90
+)
+
+plt.title("Share of Loans by Region")
+plt.axis("equal")  
+plt.tight_layout()
+plt.show()
+```
+
+The southern US was the most common region of residence for borrowers, and 
+the midwest was the least common region.
+
+## Timing and Purpose of Loans
+
+```{python}
+loans_by_month = (
+    accepted
+    .set_index("issue_d")
+    .resample("ME")
+    .size()
+)
+
+plt.figure(figsize=(10, 5))
+
+plt.plot(
+    loans_by_month.index,
+    loans_by_month.values
+)
+
+# vertical reference line
+plt.axvline(
+    pd.Timestamp("2016-01-01"),
+    linestyle="--",
+    linewidth=2,
+    color="red",
+    label="Began Tracking Credit Utilization Data"
+)
+
+plt.xlabel("Issue Date")
+plt.ylabel("Number of Loans")
+plt.title("Loan Originations per Month Over Time")
+
+plt.legend()
+plt.tight_layout()
+plt.show()
+```
+
+The vertical red line indicates the point at which the credit utilization 
+data began being tracked. In this dataset, the majority of loans are from 
+2015 and onwards.
+
+```{python}
+top_5_purposes = (
+    accepted["purpose"]
+    .value_counts()
+    .head(5)
+    .index
+)
+
+loans_by_month_purpose = (
+    accepted[accepted["purpose"].isin(top_5_purposes)]
+    .groupby([pd.Grouper(key="issue_d", freq="ME"), "purpose"])
+    .size()
+    .reset_index(name="n_loans")
+)
+
+plt.figure(figsize=(11, 6))
+
+for purpose, df_p in loans_by_month_purpose.groupby("purpose"):
+    plt.plot(
+        df_p["issue_d"],
+        df_p["n_loans"],
+        label=purpose
+    )
+
+plt.xlabel("Issue Date")
+plt.ylabel("Number of Loans")
+plt.title("Loan Originations Over Time by Purpose (Top 5)")
+plt.legend(title="Purpose", bbox_to_anchor=(1.02, 1), loc="upper left")
+plt.tight_layout()
+plt.show()
+```
+
+Overall, loans trends were generally consistent over time regardless of 
+purpose, with a notable exceptino being a spike in debt consolidiaton 
+loans in mid 2017.
+
+```{python}
+df_box = accepted.loc[
+    accepted["purpose"].isin(top_5_purposes),
+    ["purpose", "int_rate"]
+]
+
+df_box.boxplot(
+    column="int_rate",
+    by="purpose",
+    grid=False
+)
+
+plt.title("Interest Rate Distribution by Loan Purpose (Top 5)")
+plt.suptitle("")  
+plt.xlabel("Loan Purpose")
+plt.ylabel("Interest Rate (%)")
+
+plt.xticks(rotation=30)
+plt.tight_layout()
+plt.show()
+
+from scipy.stats import kruskal
+
+groups = [
+    df_box.loc[df_box["purpose"] == p, "int_rate"]
+    for p in top_5_purposes
+]
+
+h_stat, p_value_kw = kruskal(*groups)
+
+print("Kruskal–Wallis Test: Interest Rate by Loan Purpose (Top 5)")
+print("-" * 55)
+print(f"H statistic : {h_stat:,.3f}")
+print(f"p-value     : {p_value:.3e}")
+
+if p_value < 0.05:
+    print("Result      : Reject H₀ (distributions differ across purposes)")
+else:
+    print("Result      : Fail to reject H₀ (no evidence of differences)")
+```
+
+A quick Kruskal-Wallis test confirms that the distributions of interest 
+rates are significantly different for each of the top 5 most common loan 
+purposes. Debt consolidation loans tend to have slightly higher interest 
+rates on average.
+
+```{python}
+```
+
+
+## Loan Outcomes
+
+
+```{python}
+
+```
+
