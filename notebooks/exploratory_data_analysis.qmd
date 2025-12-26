@@ -350,14 +350,267 @@ rates are significantly different for each of the top 5 most common loan
 purposes. Debt consolidation loans tend to have slightly higher interest 
 rates on average.
 
-```{python}
-```
-
-
 ## Loan Outcomes
 
+When analyzing loan outcomes, we need to only consider the subset of loans 
+that are no longer current (as of when the data was collected).
+
+```{python}
+import seaborn as sns
+
+df_violin = accepted.loc[
+    accepted["current_flag"] == 0,
+    ["annual_inc", "int_rate", "default", "loan_amnt"]
+].dropna()
+
+# Only include both 99%
+inc_99 = df_violin["annual_inc"].quantile(0.99)
+
+df_violin_plot = df_violin.copy()
+df_violin_plot["annual_inc"] = (
+  df_violin_plot["annual_inc"].clip(upper=inc_99))
+
+fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(8, 12))
+
+# Annual Income
+sns.violinplot(
+    data=df_violin_plot,
+    x="default",
+    y="annual_inc",
+    inner="quartile",
+    cut=0,
+    ax=axes[0]
+)
+
+axes[0].set_title("Annual Income by Default Status (≤ 99th Percentile)")
+axes[0].set_xlabel("Default Status (0 = No Default, 1 = Default)")
+axes[0].set_ylabel("Annual Income ($)")
+
+# Interest rate
+sns.violinplot(
+    data=df_violin_plot,
+    x="default",
+    y="int_rate",
+    inner="quartile",
+    cut=0,
+    ax=axes[1]
+)
+
+axes[1].set_title("Interest Rate by Default Status")
+axes[1].set_xlabel("Default Status (0 = No Default, 1 = Default)")
+axes[1].set_ylabel("Interest Rate (%)")
+
+
+# Loan amount
+sns.violinplot(
+    data=df_violin_plot,
+    x="default",
+    y="loan_amnt",
+    inner="quartile",
+    cut=0,
+    ax=axes[2]
+)
+
+axes[2].set_title("Loan Amount by Default Status")
+axes[2].set_xlabel("Default Status (0 = No Default, 1 = Default)")
+axes[2].set_ylabel("Loan Amount ($)")
+
+plt.tight_layout()
+plt.show()
+```
+
+
+Annual income follows a similar distribution for borrowers who defaulted 
+versus those who did not, but the non-defaulted group has a slightly 
+larger tail to the right. Non-defaulted loans appear to generally have 
+lower interesed rates compared to loans that default. Similarly, it 
+appears that defaulted loans were more frequently borrowing more money 
+than non-defaulted loans.
 
 ```{python}
 
+# Restrict to non-current loans
+df_nc = accepted.loc[accepted["current_flag"] == 0].copy()
+
+# Prepare variables
+
+# grade
+grade_counts = (
+    df_nc
+    .groupby(["grade", "default"])
+    .size()
+    .unstack(fill_value=0)
+)
+grade_props = grade_counts.div(grade_counts.sum(axis=1), axis=0)
+
+# term
+term_counts = (
+    df_nc
+    .groupby(["term", "default"])
+    .size()
+    .unstack(fill_value=0)
+)
+term_props = term_counts.div(term_counts.sum(axis=1), axis=0)
+
+# purposes (top 5)
+top_5_purposes = (
+    df_nc["purpose"]
+    .value_counts()
+    .head(5)
+    .index
+)
+
+purpose_counts = (
+    df_nc.loc[df_nc["purpose"].isin(top_5_purposes)]
+    .groupby(["purpose", "default"])
+    .size()
+    .unstack(fill_value=0)
+)
+purpose_props = purpose_counts.div(purpose_counts.sum(axis=1), axis=0)
+
+# Plot
+fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(20, 10))
+
+plots = [
+    (grade_counts, grade_props, "Default vs Non-Default by Loan Grade", "Loan Grade"),
+    (term_counts, term_props, "Default vs Non-Default by Loan Term", "Loan Term (Months)"),
+    (purpose_counts, purpose_props, "Default vs Non-Default by Loan Purpose (Top 5)", "Loan Purpose")
+]
+
+for ax, (counts, props, title, xlabel) in zip(axes, plots):
+
+    counts.plot(kind="bar", stacked=True, ax=ax)
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel("Number of Loans")
+    ax.legend(["Non-Default", "Default"])
+    ax.yaxis.set_major_formatter(mtick.StrMethodFormatter("{x:,.0f}"))
+
+    # Add percentage labels
+    for i, idx in enumerate(counts.index):
+        cum_height = 0
+        for d in [0, 1]:
+            count = counts.loc[idx, d]
+            prop = props.loc[idx, d]
+            if count > 0:
+                ax.text(
+                    i,
+                    cum_height + count / 2,
+                    f"{prop:.0%}",
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color="white"
+                )
+            cum_height += count
+
+    ax.tick_params(axis="x", rotation=30)
+
+plt.tight_layout()
+plt.show()
 ```
 
+As the grade of the loan got worse, a higher proportion of borrowers 
+defaulted, meaning the grades themselves have some predictive power. These 
+however, will not be included in modeling as a predictor, since the 
+formula was used to calculate these grade likely uses some of the other 
+predictors already in in the dataset. Roughly double the proportion of 
+borrowers defaulted on 60 month loans compared to 36 month loans. Debt 
+consolidation was the most defaulted-on type of loan out of the five 
+most common loan purposes.
+
+## Hardship Outcomes
+
+Similarly to default/non-default outcomes, we only want to consider 
+non-current loans in exploring hardship outcomes because it is possible 
+that current borrowers may still experience hardship before their loans 
+are completed.
+
+```{python}
+df_hardship = accepted.loc[
+    accepted["current_flag"] == 0,
+    ["hardship_flag", "annual_inc", "loan_amnt", "emp_length", "dti", "pub_rec"]
+].dropna()
+
+
+# Restrict income, pubc_rec, and dti for visualizations
+inc_99 = df_hardship["annual_inc"].quantile(0.99)
+dti_99 = accepted["dti"].quantile(0.99)
+pub_rec_99 = accepted["pub_rec"].quantile(0.99)
+
+
+df_plot = df_hardship.copy()
+df_plot["annual_inc"] = df_plot["annual_inc"].clip(upper=inc_99)
+df_plot["dti"] = df_plot["dti"].clip(upper=dti_99)
+df_plot["pub_rec"] = df_plot["pub_rec"].clip(upper=pub_rec_99)
+
+
+fig, axes = plt.subplots(nrows=5, ncols=1, figsize=(9, 16))
+
+vars_and_labels = [
+    ("annual_inc", "Annual Income (≤ 99th Percentile)"),
+    ("loan_amnt", "Loan Amount"),
+    ("emp_length", "Employment Length (Years)"),
+    ("dti", "Debt-to-Income Ratio"),
+    ("pub_rec", "Public Records")
+]
+
+for ax, (var, label) in zip(axes, vars_and_labels):
+    sns.violinplot(
+        data=df_plot,
+        x="hardship_flag",
+        y=var,
+        inner="quartile",
+        cut=0,
+        color="red",
+        ax=ax
+    )
+
+    ax.set_title(f"{label} by Hardship Status (Non-Current Loans)")
+    ax.set_xlabel("Hardship Flag (0 = No Hardship, 1 = Hardship)")
+    ax.set_ylabel(label)
+
+plt.tight_layout()
+plt.show()
+```
+
+The annual income, borrowed amount, and the debt-to-income ratios were 
+similar among hardship and non-hardship borrowers, however those who 
+experienced hardships generally had a higher number of public 
+derogatory events, fewer years of consistent employment, 
+
+```{python}
+# Plot hardships over time for non-current loans
+df_hardship = accepted.loc[
+    (accepted["current_flag"] == 0) &
+    (accepted["hardship_flag"] == 1) &
+    (accepted["hardship_start_date"].notna())
+]
+
+hardships_by_month = (
+    df_hardship
+    .set_index("hardship_start_date")
+    .resample("ME")
+    .size()
+)
+
+plt.figure(figsize=(10, 5))
+
+plt.plot(
+    hardships_by_month.index,
+    hardships_by_month.values
+)
+
+plt.xlabel("Hardship Start Date")
+plt.ylabel("Number of Hardships")
+plt.title("Number of Hardships per Month (Non-Current Loans)")
+
+plt.tight_layout()
+plt.show()
+```
+
+For non-current loans, the number of hardship periods spiked in October of 
+2017.
+
+## Loss After Borrowers Default
