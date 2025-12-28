@@ -801,3 +801,50 @@ plt.show()
 
 Not all borrowers who default end up creating a loss for the lender, 
 and loss generally tends to  increase as the grade of the loan worsens.
+
+```{python}
+df_sample = df_lgd.sample(n=1000, random_state=10)
+
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(14, 5))
+
+# LGD versus loan amount
+axes[0].scatter(
+    df_sample["loan_amnt"],
+    df_sample["lgd"],
+    alpha=0.4
+)
+
+# trendline 
+coef_loan = np.polyfit(df_sample["loan_amnt"], df_sample["lgd"], 1)
+x_vals = np.linspace(df_sample["loan_amnt"].min(), df_sample["loan_amnt"].max(), 100)
+axes[0].plot(x_vals, coef_loan[0] * x_vals + coef_loan[1])
+
+axes[0].set_title("LGD vs Loan Amount (1,000 Defaults)")
+axes[0].set_xlabel("Loan Amount ($)")
+axes[0].set_ylabel("LGD")
+axes[0].yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+axes[0].xaxis.set_major_formatter(mtick.StrMethodFormatter("{x:,.0f}"))
+
+# lgd versus average FICO
+axes[1].scatter(
+    df_sample["fico_avg"],
+    df_sample["lgd"],
+    alpha=0.4
+)
+
+# trendline 
+coef_fico = np.polyfit(df_sample["fico_avg"], df_sample["lgd"], 1)
+x_vals = np.linspace(df_sample["fico_avg"].min(), df_sample["fico_avg"].max(), 100)
+axes[1].plot(x_vals, coef_fico[0] * x_vals + coef_fico[1])
+
+axes[1].set_title("LGD vs Average FICO (1,000 Defaults)")
+axes[1].set_xlabel("Average FICO Score")
+axes[1].set_ylabel("LGD")
+axes[1].yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+plt.tight_layout()
+plt.show()
+```
+
+There does not appear to be strong correlation between either loan amount 
+or average FICO score and loss given default.
