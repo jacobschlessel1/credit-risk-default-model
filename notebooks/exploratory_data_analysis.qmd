@@ -614,3 +614,190 @@ For non-current loans, the number of hardship periods spiked in October of
 2017.
 
 ## Loss After Borrowers Default
+
+Loss given default (`lgd`) is defined as:
+
+$$
+\mathrm{LGD}
+= 1 - \frac{\text{Total Recovered}}{\text{Exposure at Default (EAD)}}
+$$
+
+With the data from this dataset, this takes the following form:
+
+$$
+\mathrm{LGD}
+= 1 - 
+\frac{
+\text{total\_rec\_prncp}
++ \text{total\_rec\_int}
++ \text{total\_rec\_late\_fee}
++ \text{recoveries}
+- \text{collection\_recovery\_fee}
+}{
+\text{loan\_amnt}
+}
+$$
+
+
+
+```{python}
+# create lgd variable
+
+# use only defaulted, non-current loans
+df_lgd = accepted.loc[
+    (accepted["default"] == 1) &
+    (accepted["current_flag"] == 0)
+].copy()
+
+
+df_lgd["total_recovered"] = (
+    df_lgd["total_rec_prncp"].fillna(0)
+    + df_lgd["total_rec_int"].fillna(0)
+    + df_lgd["total_rec_late_fee"].fillna(0)
+    + df_lgd["recoveries"].fillna(0)
+    - df_lgd["collection_recovery_fee"].fillna(0)
+)
+
+df_lgd["lgd"] = 1 - (df_lgd["total_recovered"] / df_lgd["loan_amnt"])
+df_lgd["lgd"] = df_lgd["lgd"].clip(lower=0, upper=1)
+```
+
+
+```{python}
+median_lgd_by_month = (
+    df_lgd
+    .set_index("issue_d")
+    .resample("ME")["lgd"]
+    .median()
+)
+
+plt.figure(figsize=(10, 5))
+
+plt.plot(
+    median_lgd_by_month.index,
+    median_lgd_by_month.values
+)
+
+plt.xlabel("Issue Month")
+plt.ylabel("Median LGD")
+plt.title("Median LGD by Origination Month")
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+plt.tight_layout()
+plt.show()
+```
+
+Looking at this graph, `lgd` appears to increase as time goes on, however 
+it is important to consider the context of the data. Loans that were 
+issued more recently would be expected to have higher losses because the 
+lender has had less time to initiate recovery operations, so over time 
+the borrowers would return more of the loaned amount and the lender's 
+losses would decrease until reaching they long-term loss amount (the true 
+loss). For this project, only loans issued before 2016 will be considered 
+for any loss given default analysis and modeling, as this ensures that 
+the lender has had enough time to recover the money as of the 2019 
+publication of the dataset.
+
+
+```{python}
+df_lgd_pre2016 = df_lgd.loc[
+    df_lgd["issue_d"] < pd.Timestamp("2016-01-01")
+].copy()
+
+# compute median LGD by month
+median_lgd_by_month = (
+    df_lgd_pre2016
+    .set_index("issue_d")
+    .resample("ME")["lgd"]
+    .median()
+)
+
+# plot
+plt.figure(figsize=(10, 5))
+
+plt.plot(
+    median_lgd_by_month.index,
+    median_lgd_by_month.values
+)
+
+plt.xlabel("Issue Month")
+plt.ylabel("Median LGD")
+plt.title("Median LGD by Origination Month (Loans Issued Before 2016)")
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+plt.tight_layout()
+plt.show()
+```
+
+LGD was slighly higher for loans issued in 2015 compared to the three 
+years prior.
+
+```{python}
+plt.figure(figsize=(7, 5))
+
+sns.violinplot(
+    data=df_lgd_pre2016,
+    x="hardship_flag",
+    y="lgd",
+    inner="quartile",
+    cut=0
+)
+
+plt.title("LGD by Hardship Status, Pre-2016 Loans")
+plt.xlabel("Hardship Flag (0 = No Hardship, 1 = Hardship)")
+plt.ylabel("Loss Given Default (LGD)")
+plt.gca().yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+plt.tight_layout()
+plt.show()
+```
+
+Borrowers who both entered a hardsip plan and defaulted often resulted in 
+lower losses for the lender on average than those who never entered a 
+hardship plan at all. This could suggest that hardship plans are an 
+effective strategy for lowering losses for the lender.
+
+
+
+```{python}
+median_lgd_by_grade = (
+    df_lgd_pre2016
+    .groupby("grade")["lgd"]
+    .median()
+    .sort_index()
+)
+
+fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(14, 5))
+
+# LGD distribution
+axes[0].hist(
+    df_lgd_pre2016["lgd"],
+    bins=40,
+    edgecolor="black",
+    linewidth=0.8
+)
+
+axes[0].set_title(
+  "Distribution of Loss Given Default (LGD), Pre-2016 Loans")
+axes[0].set_xlabel("LGD")
+axes[0].set_ylabel("Number of Loans")
+axes[0].xaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+# Median LGD by grade
+axes[1].bar(
+    median_lgd_by_grade.index,
+    median_lgd_by_grade.values,
+    edgecolor="black"
+)
+
+axes[1].set_title("Median LGD by Loan Grade, Pre-2016")
+axes[1].set_xlabel("Loan Grade")
+axes[1].set_ylabel("Median LGD")
+axes[1].yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
+
+plt.tight_layout()
+plt.show()
+```
+
+Not all borrowers who default end up creating a loss for the lender, 
+and loss generally tends to  increase as the grade of the loan worsens.
