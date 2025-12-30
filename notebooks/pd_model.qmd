@@ -594,11 +594,16 @@ print_top_shap_xgb(
 )
 ```
 
+The ROC-AUC values for the post-2016 loans (loans with credit utilization 
+date available) were just slightly higher than the pre-2016 loans (~0.73 
+compared to 0.72). Once again, the XGBoost model captured more true 
+defaults compared to the logistic regression and random forest models, 
+however the recall and precision were almost exactly the same as the 
+pre-2016 XGBoost model.
 
-To do:
-- add explanations of models - feature importance
-- model LGD using random forest regressor, xgboost regressor, and pytorch
-- combine PD and LGD models for expected loss
-- change previous files to show i am not longer doing PH model
-- add deliverables for stakeholders to repo
+The most important features were almost exactly the same as the pre-2016 
+model, though this time the number of mortgage accounts the borrower had 
+was one of the top five most important predictors instead of the low range 
+of the borrower's FICO score.
+
 
