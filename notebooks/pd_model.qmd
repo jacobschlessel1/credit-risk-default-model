@@ -172,9 +172,6 @@ print(interaction_delinq)
 We want to fill in all missing/previously filled in sentinel values with 0 
 so that we can later standardize these variables for regression.
 
-**************************************************************************
-HANDLE MISSING CREDIT UTILIZATION VARIABLES (MISSING FROM BEFORE 2016)
-**************************************************************************
 
 ```{python}
 df["post_2016"] = df["issue_d"].dt.year >= 2016
@@ -233,102 +230,266 @@ will not include these.
 
 ## Modeling
 
-### Logistic Regression
-
-#### Pre-2016
 ```{python}
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    roc_auc_score, confusion_matrix, classification_report)
+from xgboost import XGBClassifier
+import shap
 
-# define predictors-
+def print_model_output(name, model, X_test, y_test):
+    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    y_pred = (y_pred_proba >= 0.5).astype(int)
 
-pred_cat_final = pred_cat
-pred_num_final = pred_num + joint_conditionals + interaction_delinq
+    auc = roc_auc_score(y_test, y_pred_proba)
+    cm = confusion_matrix(y_test, y_pred)
+    cr = classification_report(y_test, y_pred, digits=4)
 
-feature_cols = pred_cat_final + pred_num_final
+    print(f"{name} AUC: {auc:.4f}")
+
+    print("\nConfusion Matrix:")
+    print(cm)
+
+    print("\nClassification Report:")
+    print(cr)
+
+# Function to dummy encode categorical variables
+def encode_categoricals(X):
+    X = pd.get_dummies(
+        X,
+        columns=pred_cat,
+        drop_first=True
+    )
+
+    return X
+
+# Function to split data into training/testing subsets
+def split_xy(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        stratify=y,
+        random_state=42
+    )
+
+    return X_train, X_test, y_train, y_test
+
+
+# Function to standardize all non-flag variables
+def standardize_non_flags(X_train, X_test, scale_vars):
+    scaler = StandardScaler()
+    X_train[scale_vars] = scaler.fit_transform(X_train[scale_vars])
+    X_test[scale_vars] = scaler.transform(X_test[scale_vars])
+
+    return X_train, X_test
+
+# Function to fit logitistic regression models
+def fit_logit_model(X_train, y_train):
+    model = LogisticRegression(
+        penalty="l2", # regularized
+        solver="lbfgs",
+        max_iter=5000,
+        class_weight="balanced",
+        random_state=42
+    )
+
+    model.fit(X_train, y_train)
+
+    return model
+
+# Function to fit random forest models
+def fit_rf_model(X_train, y_train):
+    model = RandomForestClassifier(
+        n_estimators=400,
+        max_depth=None,
+        min_samples_leaf=50,
+        class_weight="balanced",
+        n_jobs=-1,
+        random_state=42
+    )
+
+    model.fit(X_train, y_train)
+
+    return model
+
+# Function to fit XGBoost models
+def fit_xgb_model(X_train, y_train, n_estimators):
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+    model = XGBClassifier(
+        n_estimators=n_estimators,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="binary:logistic",
+        eval_metric="auc",
+        scale_pos_weight=scale_pos_weight,
+        tree_method="hist",
+        n_jobs=-1,
+        random_state=42
+    )
+
+    model.fit(X_train, y_train)
+
+    return model
+    
+# Function to print SHAP values for XGBoost models
+def print_top_shap_xgb(name, model, X, top_n=5):
+    
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+
+    shap_importance = pd.Series(
+        np.abs(shap_values).mean(axis=0),
+        index=X.columns
+    ).sort_values(ascending=False)
+
+    print(f"\n{name} Top {top_n} SHAP Features:")
+    print(shap_importance.head(top_n))
+```
+
+
+
+### Pre-2016
+
+```{python}
+# PRE-2016 modeling
+
+# define predictors
+
+pred_num_final = (
+    pred_num
+    + joint_conditionals
+    + interaction_delinq
+)
 
 # subset data
 
-X = df_pre2016[feature_cols]
-y = df_pre2016["default"]
+X = df_pre2016[pred_cat + pred_num_final].copy()
+y = df_pre2016["default"].copy()
 
 # encode categoricals
 
-X = pd.get_dummies(
-    X,
-    columns=pred_cat_final,
-    drop_first=True
-)
+X = encode_categoricals(X)
 
 # train/test split
 
-X_train, X_test, y_train, y_test = train_test_split(
+X_train, X_test, y_train, y_test = split_xy(
     X,
-    y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
+    y
 )
+```
 
-# standardize all non-flag variables
+#### Logistic Regression
+
+```{python}
+# Pre-2016 logistic regression
 
 scale_vars = [
     c for c in pred_num_final
     if not c.endswith("_flag") and not c.endswith("_missing")
 ]
 
-scaler = StandardScaler()
-X_train[scale_vars] = scaler.fit_transform(X_train[scale_vars])
-X_test[scale_vars] = scaler.transform(X_test[scale_vars])
-
-# fit regularized logistic regression model
-
-logit_pre2016 = LogisticRegression(
-    penalty="l2",
-    solver="lbfgs",
-    max_iter=5000,
-    class_weight="balanced",
-    random_state=42
+X_train_logit, X_test_logit = standardize_non_flags(
+    X_train.copy(),
+    X_test.copy(),
+    scale_vars
 )
 
-logit_pre2016.fit(X_train, y_train)
-
-# evaluate
-
-y_pred_proba = logit_pre2016.predict_proba(X_test)[:, 1]
-auc_pre2016 = roc_auc_score(y_test, y_pred_proba)
-
-print(f"Pre-2016 Logistic Regression AUC: {auc_pre2016:.4f}")
-```
-
-```{python}
-from sklearn.metrics import confusion_matrix, classification_report
-
-# Predict probabilities and classes
-y_pred_proba = logit_pre2016.predict_proba(X_test)[:, 1]
-y_pred = (y_pred_proba >= 0.5).astype(int)
-
-# Metrics
-cm_pre2016 = confusion_matrix(y_test, y_pred)
-cr_pre2016 = classification_report(y_test, y_pred, digits=4)
+logit_pre2016 = fit_logit_model(
+    X_train_logit,
+    y_train
+)
 
 print("\nPRE-2016 LOGISTIC REGRESSION")
-print("Confusion Matrix:")
-print(cm_pre2016)
-
-print("\nClassification Report:")
-print(cr_pre2016)
+print_model_output(
+    "Pre-2016 Logistic Regression",
+    logit_pre2016,
+    X_test_logit,
+    y_test
+)
 ```
 
-
-#### Post-2016
+#### Random Forest
 
 ```{python}
-# Define predictors
-pred_cat_final = pred_cat
+# Pre-2016 Random Forest
 
+rf_pre2016 = fit_rf_model(
+    X_train,
+    y_train
+)
+
+print("\nPRE-2016 RANDOM FOREST")
+print_model_output(
+    "Pre-2016 Random Forest",
+    rf_pre2016,
+    X_test,
+    y_test
+)
+```
+
+#### XGBoost
+
+```{python}
+# Pre-2016 XGBoost
+
+xgb_pre2016 = fit_xgb_model(
+    X_train,
+    y_train,
+    n_estimators=400
+)
+
+print("\nPRE-2016 XGBOOST")
+print_model_output(
+    "Pre-2016 XGBoost",
+    xgb_pre2016,
+    X_test,
+    y_test
+)
+
+print_top_shap_xgb(
+    "Pre XGBoost",
+    xgb_pre2016,
+    X_train
+)
+```
+
+The ROC-AUC values were very similar for all 3 pre-2016 models (~0.72), 
+meaning each model performed decently at classifying default risk. 
+Technically speaking, if you were to random pick out one defaulted loan 
+and one non-defaulted loan, the models will assign a higher predicted probablity of default to the defaulted loan about 72% of the time.
+
+The XGBoost model had the highest recall for defaulted loans (0.67 
+compared to 0.64 and 0.59 for logistic regression and random forest 
+respectively), meaning that it captured 67% of true defaults 67%, and 
+those that it did classify as likely to default were 35% accurate. In 
+deploying this model, there are higher costs associated with false 
+negatives and lower costs with false positives, so I would recommend 
+the XGBoost model over the other 2 because it is less conservative with 
+labeling borrowers as risky.
+
+The most important features in predicting risk of default were the 
+interest rate of the loan, the debt-to-income ratio of the borrower, the 
+value of the loan, the term of the loan (60 month loans were more likely 
+to default) and the low range of the borrower's FICO score. Of these, 
+interest rate was by far the most impactful predictor.
+
+
+### Logistic Regression
+
+### Post-2016:
+
+```{python}
+# Post 2016 modeling
+
+
+# predictors: include credit variables
 pred_num_final = (
     pred_num
     + joint_conditionals
@@ -336,36 +497,29 @@ pred_num_final = (
     + recent_credit_vars_2016
 )
 
-feature_cols = pred_cat_final + pred_num_final
-
-
-X = df_post2016[feature_cols].copy()
+# subset data
+X = df_post2016[pred_cat + pred_num_final].copy()
 y = df_post2016["default"].copy()
 
-
-# Fill missing credit util data with 0s
+# fill missing credit variables with 0
 for col in recent_credit_vars_2016:
     X[col] = X[col].fillna(0)
 
-# Encode categoircals
+# encode categoricals
+X = encode_categoricals(X)
 
-X = pd.get_dummies(
+# train/test split
+X_train, X_test, y_train, y_test = split_xy(
     X,
-    columns=pred_cat_final,
-    drop_first=True
+    y
 )
+```
 
+#### Logistic Regression
 
-# Train/test split
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
-)
+```{python}
+# Post-2016 Logistic Regression
 
-# Standardize non-flags
 scale_vars = [
     c for c in X_train.columns
     if (
@@ -375,180 +529,76 @@ scale_vars = [
     )
 ]
 
-scaler = StandardScaler()
-X_train[scale_vars] = scaler.fit_transform(X_train[scale_vars])
-X_test[scale_vars] = scaler.transform(X_test[scale_vars])
-
-
-# Fit regularized logistic regression
-logit_post2016 = LogisticRegression(
-    penalty="l2",
-    solver="lbfgs",
-    max_iter=5000,
-    class_weight="balanced",
-    random_state=42
+X_train_logit, X_test_logit = standardize_non_flags(
+    X_train.copy(),
+    X_test.copy(),
+    scale_vars
 )
 
-logit_post2016.fit(X_train, y_train)
+logit_post2016 = fit_logit_model(
+    X_train_logit,
+    y_train
+)
 
-# Evaluate
-
-y_pred_proba = logit_post2016.predict_proba(X_test)[:, 1]
-y_pred = (y_pred_proba >= 0.5).astype(int)
-
-auc = roc_auc_score(y_test, y_pred_proba)
-cm = confusion_matrix(y_test, y_pred)
-cr = classification_report(y_test, y_pred, digits=4)
-
-print(f"Post-2016 Logistic Regression AUC: {auc:.4f}")
-
-print("\nConfusion Matrix:")
-print(cm)
-
-print("\nClassification Report:")
-print(cr)
+print("\nPOST-2016 LOGISTIC REGRESSION")
+print_model_output(
+    "Post-2016 Logistic Regression",
+    logit_post2016,
+    X_test_logit,
+    y_test
+)
 ```
 
-### Random Forest
-
-#### Pre-2016
+#### Random Forest
 
 ```{python}
-pred_cat_final = pred_cat
+# Post-2016 Random Forest
 
-pred_num_final = (
-    pred_num
-    + joint_conditionals
-    + interaction_delinq
+rf_post2016 = fit_rf_model(
+    X_train,
+    y_train
 )
 
-feature_cols = pred_cat_final + pred_num_final
-
-# Subset data
-
-X = df_pre2016[feature_cols].copy()
-y = df_pre2016["default"].copy()
-
-# -Encode categorical variables
-
-X = pd.get_dummies(
-    X,
-    columns=pred_cat_final,
-    drop_first=True
+print("\nPOST-2016 RANDOM FOREST")
+print_model_output(
+    "Post-2016 Random Forest",
+    rf_post2016,
+    X_test,
+    y_test
 )
-
-# Train/test split
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
-)
-
-# Train Random Forest model
-
-rf_pre2016 = RandomForestClassifier(
-    n_estimators=400,
-    max_depth=None,
-    min_samples_leaf=50,
-    class_weight="balanced",
-    n_jobs=-1,
-    random_state=42
-)
-
-rf_pre2016.fit(X_train, y_train)
-
-# Evaluate performance
-
-y_pred_proba = rf_pre2016.predict_proba(X_test)[:, 1]
-y_pred = rf_pre2016.predict(X_test)
-
-auc = roc_auc_score(y_test, y_pred_proba)
-cm = confusion_matrix(y_test, y_pred)
-cr = classification_report(y_test, y_pred, digits=4)
-
-print(f"Pre-2016 Random Forest AUC: {auc:.4f}")
-
-print("\nConfusion Matrix:")
-print(cm)
-
-print("\nClassification Report:")
-print(cr)
 ```
 
-#### Post-2016
+#### XGBoost
 
 ```{python}
-from sklearn.ensemble import RandomForestClassifier
+# Post-2016 XGBoost
 
-# Define predictors
-pred_cat_final = pred_cat
-
-pred_num_final = (
-    pred_num
-    + joint_conditionals
-    + interaction_delinq
-    + recent_credit_vars_2016
+xgb_post2016 = fit_xgb_model(
+    X_train,
+    y_train,
+    n_estimators=500
 )
 
-feature_cols = pred_cat_final + pred_num_final
-
-# Subset data
-
-X = df_post2016[feature_cols].copy()
-y = df_post2016["default"].copy()
-
-# Fill missing credit variables with 0
-
-for col in recent_credit_vars_2016:
-    X[col] = X[col].fillna(0)
-
-# Encode categoricals
-
-X = pd.get_dummies(
-    X,
-    columns=pred_cat_final,
-    drop_first=True
+print("\nPOST-2016 XGBOOST")
+print_model_output(
+    "Post-2016 XGBoost",
+    xgb_post2016,
+    X_test,
+    y_test
 )
 
-# Train/test split
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.2,
-    stratify=y,
-    random_state=42
+print_top_shap_xgb(
+    "Post-2016 XGBoost",
+    xgb_post2016,
+    X_train
 )
-
-# Train random forest-
-rf_post2016 = RandomForestClassifier(
-    n_estimators=400,
-    max_depth=None,
-    min_samples_leaf=50,
-    class_weight="balanced",
-    n_jobs=-1,
-    random_state=42
-)
-
-rf_post2016.fit(X_train, y_train)
-
-# Evaluate
-
-y_pred_proba = rf_post2016.predict_proba(X_test)[:, 1]
-y_pred = rf_post2016.predict(X_test)
-
-auc = roc_auc_score(y_test, y_pred_proba)
-cm = confusion_matrix(y_test, y_pred)
-cr = classification_report(y_test, y_pred, digits=4)
-
-print(f"Post-2016 Random Forest AUC: {auc:.4f}")
-
-print("\nConfusion Matrix:")
-print(cm)
-
-print("\nClassification Report:")
-print(cr)
 ```
+
+
+To do:
+- add explanations of models - feature importance
+- model LGD using random forest regressor, xgboost regressor, and pytorch
+- combine PD and LGD models for expected loss
+- change previous files to show i am not longer doing PH model
+- add deliverables for stakeholders to repo
+
