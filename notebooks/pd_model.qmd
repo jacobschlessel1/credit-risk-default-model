@@ -1,0 +1,554 @@
+---
+title: "Probability of Default (PD) Modeling"
+author: "Jacob Schlessel"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook will perform feature selection, model building, and evaluate 
+the performance of the Probability of Default (PD) model
+
+## Setup
+
+```{python}
+import pandas as pd
+
+df = pd.read_parquet(
+    "../data/processed/accepted_clean.parquet",
+    engine="pyarrow"
+)
+
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", None)
+
+# Only use non-current loans
+df = df.loc[df["current_flag"] == 0].copy()
+```
+
+This model will only consider non-current loans to ensure outcomes are 
+fully realized.
+
+## Feature selection
+
+```{python}
+# Define outcomes as default (=1)
+y = df["default"]
+y.value_counts(normalize=True)
+```
+
+Roughly 20% of loans in the dataset were defaulted. We will need to 
+correct for this class imbalance in later modeling.
+
+```{python}
+# Categorical predictors
+pred_cat = [
+    "term", "region", "home_ownership"]
+
+# Numeric predictor variables
+pred_num = [
+
+    # loan structure
+    "loan_amnt",
+    "funded_amnt",
+    "int_rate",
+
+    # borrower capacity
+    "annual_inc",
+    "emp_length",
+    "dti",
+
+    # credit quality
+    "fico_range_low",
+    "fico_range_high",
+    "delinq_2yrs",
+    "pub_rec",
+    "pub_rec_bankruptcies",
+    "collections_12_mths_ex_med",
+    "chargeoff_within_12_mths",
+    "tax_liens",
+
+    # utilization / balances
+    "revol_bal",
+    "revol_util",
+    "total_bal_ex_mort",
+    "avg_cur_bal",
+    "bc_util",
+    "percent_bc_gt_75",
+    "bc_open_to_buy",
+    "total_rev_hi_lim",
+    "total_bc_limit",
+    "total_il_high_credit_limit",
+
+    # credit depth & activity
+    "open_acc",
+    "total_acc",
+    "mort_acc",
+    "inq_last_6mths",
+    "acc_open_past_24mths",
+    "num_rev_accts",
+    "num_il_tl",
+    "num_op_rev_tl",
+    "num_sats",
+
+
+    # flag variables
+    "joint_flag",
+    "verified_flag",
+    "verified_flag_joint",
+    "whole_loan_flag",
+
+    # structural missingness flags
+    "mths_since_last_record_flag",
+    "mths_since_recent_bc_dlq_flag",
+    "mths_since_last_major_derog_flag",
+    "mths_since_recent_revol_delinq_flag",
+    "mths_since_last_delinq_flag",
+]
+```
+
+### Interaction terms Based on Flag Variables
+
+For some variables, we only want the model to consider their value based 
+on the presence/absence of a corresponding flag variable. For example, 
+for joint loans, we only want to consider the value of `annual_inc_joint` 
+if the loan was filed jointly (`joint_flag` = 1). To achieve this, we 
+will create interaction terms for all of the flag variables and their 
+corresponding features. These will be included in linear models only. 
+
+```{python}
+# Conditional joint variables
+joint_numeric_pred = [
+    "sec_app_mths_since_last_major_derog",
+    "sec_app_revol_util",
+    "revol_bal_joint",
+    "sec_app_open_acc",
+    "sec_app_num_rev_accts",
+    "sec_app_inq_last_6mths",
+    "sec_app_mort_acc",
+    "sec_app_open_act_il",
+    "sec_app_fico_range_low",
+    "sec_app_fico_range_high",
+    "sec_app_chargeoff_within_12_mths",
+    "sec_app_collections_12_mths_ex_med",
+    "dti_joint",
+    "annual_inc_joint"
+]
+
+joint_conditionals = []
+
+for var in joint_numeric_pred:
+    df[var] = df[var].fillna(0)
+    df[f"{var}_active"] = df["joint_flag"] * df[var]
+    joint_conditionals.append(f"{var}_active")
+
+print(joint_conditionals)
+```
+
+```{python}
+# Deliquency flags and interactions
+flag_to_var = {
+    "mths_since_last_record_flag": "mths_since_last_record",
+    "mths_since_recent_bc_dlq_flag": "mths_since_recent_bc_dlq",
+    "mths_since_last_major_derog_flag": "mths_since_last_major_derog",
+    "mths_since_recent_revol_delinq_flag": "mths_since_recent_revol_delinq",
+    "mths_since_last_delinq_flag": "mths_since_last_delinq",
+}
+
+interaction_delinq = []
+
+for flag, var in flag_to_var.items():
+    df[var] = df[var].replace(999, 0).fillna(0)
+    df[f"{var}_active"] = df[flag] * df[var]
+    interaction_delinq.append(f"{var}_active")
+
+print(interaction_delinq)
+```
+
+We want to fill in all missing/previously filled in sentinel values with 0 
+so that we can later standardize these variables for regression.
+
+**************************************************************************
+HANDLE MISSING CREDIT UTILIZATION VARIABLES (MISSING FROM BEFORE 2016)
+**************************************************************************
+
+```{python}
+df["post_2016"] = df["issue_d"].dt.year >= 2016
+
+df["post_2016"].value_counts().rename({
+    False: "pre_2016",
+    True: "post_2016"
+})
+
+df_pre2016 = df[df["issue_d"].dt.year < 2016].copy()
+df_post2016 = df[df["issue_d"].dt.year >= 2016].copy()
+```
+
+Roughly 2/3 of the loans are from before 2016, meaning these rows do not 
+have data for any of the credit utilization variables. Because the sample 
+size is large enough for both pre and post 2016, we will train two 
+separate models: one for pre-2016 data without these variables, and one 
+for post-2016 data including these variables as predictors.
+
+### Notable Features Not Included
+
+The following features will not be included as predictors because they are 
+post-origination variables (would result in leakage) or because they are 
+calculated using other features:
+
+- `grade`: calculated using other predictors
+- all hardship variables: post-origination
+- all settlement variables: post-origination
+- Any payment timing variables: post origination
+- Any recovery variables: post-origination
+
+
+```{python}
+# list of 2016 onwards credit utilization variables
+recent_credit_vars_2016 = [
+    "il_util",
+    "mths_since_rcnt_il",
+    "all_util",
+    "open_acc_6m",
+    "inq_last_12m",
+    "total_cu_tl",
+    "open_il_24m",
+    "open_il_12m",
+    "open_act_il",
+    "max_bal_bc",
+    "inq_fi",
+    "total_bal_il",
+    "open_rv_24m",
+    "open_rv_12m"
+]
+```
+
+The logistic regression model will include the joint interaction variables 
+and the delinquency interaction variables as predictors, but other models 
+will not include these.
+
+## Modeling
+
+### Logistic Regression
+
+#### Pre-2016
+```{python}
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+
+# define predictors-
+
+pred_cat_final = pred_cat
+pred_num_final = pred_num + joint_conditionals + interaction_delinq
+
+feature_cols = pred_cat_final + pred_num_final
+
+# subset data
+
+X = df_pre2016[feature_cols]
+y = df_pre2016["default"]
+
+# encode categoricals
+
+X = pd.get_dummies(
+    X,
+    columns=pred_cat_final,
+    drop_first=True
+)
+
+# train/test split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+# standardize all non-flag variables
+
+scale_vars = [
+    c for c in pred_num_final
+    if not c.endswith("_flag") and not c.endswith("_missing")
+]
+
+scaler = StandardScaler()
+X_train[scale_vars] = scaler.fit_transform(X_train[scale_vars])
+X_test[scale_vars] = scaler.transform(X_test[scale_vars])
+
+# fit regularized logistic regression model
+
+logit_pre2016 = LogisticRegression(
+    penalty="l2",
+    solver="lbfgs",
+    max_iter=5000,
+    class_weight="balanced",
+    random_state=42
+)
+
+logit_pre2016.fit(X_train, y_train)
+
+# evaluate
+
+y_pred_proba = logit_pre2016.predict_proba(X_test)[:, 1]
+auc_pre2016 = roc_auc_score(y_test, y_pred_proba)
+
+print(f"Pre-2016 Logistic Regression AUC: {auc_pre2016:.4f}")
+```
+
+```{python}
+from sklearn.metrics import confusion_matrix, classification_report
+
+# Predict probabilities and classes
+y_pred_proba = logit_pre2016.predict_proba(X_test)[:, 1]
+y_pred = (y_pred_proba >= 0.5).astype(int)
+
+# Metrics
+cm_pre2016 = confusion_matrix(y_test, y_pred)
+cr_pre2016 = classification_report(y_test, y_pred, digits=4)
+
+print("\nPRE-2016 LOGISTIC REGRESSION")
+print("Confusion Matrix:")
+print(cm_pre2016)
+
+print("\nClassification Report:")
+print(cr_pre2016)
+```
+
+
+#### Post-2016
+
+```{python}
+# Define predictors
+pred_cat_final = pred_cat
+
+pred_num_final = (
+    pred_num
+    + joint_conditionals
+    + interaction_delinq
+    + recent_credit_vars_2016
+)
+
+feature_cols = pred_cat_final + pred_num_final
+
+
+X = df_post2016[feature_cols].copy()
+y = df_post2016["default"].copy()
+
+
+# Fill missing credit util data with 0s
+for col in recent_credit_vars_2016:
+    X[col] = X[col].fillna(0)
+
+# Encode categoircals
+
+X = pd.get_dummies(
+    X,
+    columns=pred_cat_final,
+    drop_first=True
+)
+
+
+# Train/test split
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+# Standardize non-flags
+scale_vars = [
+    c for c in X_train.columns
+    if (
+        c in pred_num_final
+        and not c.endswith("_flag")
+        and not c.endswith("_missing")
+    )
+]
+
+scaler = StandardScaler()
+X_train[scale_vars] = scaler.fit_transform(X_train[scale_vars])
+X_test[scale_vars] = scaler.transform(X_test[scale_vars])
+
+
+# Fit regularized logistic regression
+logit_post2016 = LogisticRegression(
+    penalty="l2",
+    solver="lbfgs",
+    max_iter=5000,
+    class_weight="balanced",
+    random_state=42
+)
+
+logit_post2016.fit(X_train, y_train)
+
+# Evaluate
+
+y_pred_proba = logit_post2016.predict_proba(X_test)[:, 1]
+y_pred = (y_pred_proba >= 0.5).astype(int)
+
+auc = roc_auc_score(y_test, y_pred_proba)
+cm = confusion_matrix(y_test, y_pred)
+cr = classification_report(y_test, y_pred, digits=4)
+
+print(f"Post-2016 Logistic Regression AUC: {auc:.4f}")
+
+print("\nConfusion Matrix:")
+print(cm)
+
+print("\nClassification Report:")
+print(cr)
+```
+
+### Random Forest
+
+#### Pre-2016
+
+```{python}
+pred_cat_final = pred_cat
+
+pred_num_final = (
+    pred_num
+    + joint_conditionals
+    + interaction_delinq
+)
+
+feature_cols = pred_cat_final + pred_num_final
+
+# Subset data
+
+X = df_pre2016[feature_cols].copy()
+y = df_pre2016["default"].copy()
+
+# -Encode categorical variables
+
+X = pd.get_dummies(
+    X,
+    columns=pred_cat_final,
+    drop_first=True
+)
+
+# Train/test split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+# Train Random Forest model
+
+rf_pre2016 = RandomForestClassifier(
+    n_estimators=400,
+    max_depth=None,
+    min_samples_leaf=50,
+    class_weight="balanced",
+    n_jobs=-1,
+    random_state=42
+)
+
+rf_pre2016.fit(X_train, y_train)
+
+# Evaluate performance
+
+y_pred_proba = rf_pre2016.predict_proba(X_test)[:, 1]
+y_pred = rf_pre2016.predict(X_test)
+
+auc = roc_auc_score(y_test, y_pred_proba)
+cm = confusion_matrix(y_test, y_pred)
+cr = classification_report(y_test, y_pred, digits=4)
+
+print(f"Pre-2016 Random Forest AUC: {auc:.4f}")
+
+print("\nConfusion Matrix:")
+print(cm)
+
+print("\nClassification Report:")
+print(cr)
+```
+
+#### Post-2016
+
+```{python}
+from sklearn.ensemble import RandomForestClassifier
+
+# Define predictors
+pred_cat_final = pred_cat
+
+pred_num_final = (
+    pred_num
+    + joint_conditionals
+    + interaction_delinq
+    + recent_credit_vars_2016
+)
+
+feature_cols = pred_cat_final + pred_num_final
+
+# Subset data
+
+X = df_post2016[feature_cols].copy()
+y = df_post2016["default"].copy()
+
+# Fill missing credit variables with 0
+
+for col in recent_credit_vars_2016:
+    X[col] = X[col].fillna(0)
+
+# Encode categoricals
+
+X = pd.get_dummies(
+    X,
+    columns=pred_cat_final,
+    drop_first=True
+)
+
+# Train/test split
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.2,
+    stratify=y,
+    random_state=42
+)
+
+# Train random forest-
+rf_post2016 = RandomForestClassifier(
+    n_estimators=400,
+    max_depth=None,
+    min_samples_leaf=50,
+    class_weight="balanced",
+    n_jobs=-1,
+    random_state=42
+)
+
+rf_post2016.fit(X_train, y_train)
+
+# Evaluate
+
+y_pred_proba = rf_post2016.predict_proba(X_test)[:, 1]
+y_pred = rf_post2016.predict(X_test)
+
+auc = roc_auc_score(y_test, y_pred_proba)
+cm = confusion_matrix(y_test, y_pred)
+cr = classification_report(y_test, y_pred, digits=4)
+
+print(f"Post-2016 Random Forest AUC: {auc:.4f}")
+
+print("\nConfusion Matrix:")
+print(cm)
+
+print("\nClassification Report:")
+print(cr)
+```
