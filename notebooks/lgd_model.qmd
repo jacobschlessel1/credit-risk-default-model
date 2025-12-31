@@ -24,6 +24,9 @@ pytorch
 
 ```{python}
 import pandas as pd
+import warnings
+warnings.filterwarnings("ignore")
+
 
 df = pd.read_parquet(
     "../data/processed/accepted_clean.parquet",
