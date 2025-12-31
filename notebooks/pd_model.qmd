@@ -476,9 +476,9 @@ labeling borrowers as risky.
 
 The most important features in predicting risk of default were the 
 interest rate of the loan, the debt-to-income ratio of the borrower, the 
-value of the loan, the term of the loan (60 month loans were more likely 
-to default) and the low range of the borrower's FICO score. Of these, 
-interest rate was by far the most impactful predictor.
+value of the loan, the term of the loan  and the low range of the 
+borrower's FICO score. Of these, interest rate was by far the most 
+impactful predictor.
 
 
 ### Logistic Regression
