@@ -1,0 +1,730 @@
+---
+title: "Loss Given Default (LGD) Modeling"
+author: "Jacob Schlessel"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook will perform feature selection, model building, and evaluate 
+the performance of the Loss Given Default (LGD) model.
+
+To do:
+- model LGD using Fractional Logit regressor, xgboost regressor, and 
+pytorch
+- combine PD and LGD models for expected loss
+- change previous files to show i am not longer doing PH model
+- add deliverables for stakeholders to repo
+
+## Setup
+
+```{python}
+import pandas as pd
+
+df = pd.read_parquet(
+    "../data/processed/accepted_clean.parquet",
+    engine="pyarrow"
+)
+
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", None)
+
+# only use non-current, defaulted loans
+df_lgd = df[
+    (df["default"] == 1) &
+    (df["current_flag"] == 0)
+].copy()
+```
+
+As a reminder, loss given default (`lgd`) is defined as:
+
+$$
+\mathrm{LGD}
+= 1 - \frac{\text{Total Recovered}}{\text{Exposure at Default (EAD)}}
+$$
+
+With the data from this dataset, the outcome of loss will be calculated 
+as following:
+
+$$
+\mathrm{LGD}
+= 1 - 
+\frac{
+\text{total\_rec\_prncp}
++ \text{total\_rec\_int}
++ \text{total\_rec\_late\_fee}
++ \text{recoveries}
+- \text{collection\_recovery\_fee}
+}{
+\text{loan\_amnt}
+}
+$$
+
+
+```{python}
+# create outcome lgd variable
+df_lgd["total_recovered"] = (
+    df_lgd["total_rec_prncp"].fillna(0)
+    + df_lgd["total_rec_int"].fillna(0)
+    + df_lgd["total_rec_late_fee"].fillna(0)
+    + df_lgd["recoveries"].fillna(0)
+    - df_lgd["collection_recovery_fee"].fillna(0)
+)
+
+df_lgd["lgd"] = 1 - (df_lgd["total_recovered"] / df_lgd["loan_amnt"])
+df_lgd["lgd"] = df_lgd["lgd"].clip(lower=0, upper=1)
+```
+
+
+## Feature Selection
+
+We will test 3 types of models in predicting LGD:
+
+- Fractional Logit Regression
+- XGBoost Regression
+- PyTorch Neural Network
+
+The fractional logit regression is being used instead of logitic 
+regression (as done for the PD model) because for LGD, the outcome 
+variable is measured as a fraction of the initial loan amount lost which 
+is not a binary outcome. Similarly, the XGBoost and PyTorch models will 
+be regression models not design for classification.
+
+For selecting features, we will be more selective in deciding which 
+variables will be predictors for the fractional logit and PyTorch models, 
+while being less selective for the XGBoost model. This is because we want 
+to limit the dimensionality of the feature set to keep as much statistical 
+significance as possible.
+
+Once again, we will fit a model for both pre and post-2016 to include  
+the credit utilization variables only available from 2016 onwards.
+
+```{python}
+df_lgd["post_2016"] = df_lgd["issue_d"].dt.year >= 2016
+
+df_lgd["post_2016"].value_counts().rename({
+    False: "pre_2016",
+    True: "post_2016"
+})
+
+df_pre2016 = df_lgd[df_lgd["issue_d"].dt.year < 2016].copy()
+df_post2016 = df_lgd[df_lgd["issue_d"].dt.year >= 2016].copy()
+
+print(f" Pre-2016 data: {df_pre2016.shape}\n",
+f"Post-2016 data: {df_post2016.shape}")
+```
+
+Because we are being more selective, we will have to use intuiton and 
+domain knowledge to select features that we think are more likely to 
+improve the prediction for the non-XGBoost models.
+
+```{python}
+num_pred = [
+    # loan structure
+    "loan_amnt", 
+    "int_rate",
+
+    # borrower info
+    "emp_length",
+    "annual_inc",
+    "dti",
+    "fico_range_low",
+
+    # credit quality
+    "delinq_2yrs",
+    "pub_rec_bankruptcies",
+    "tax_liens",
+    "collections_12_mths_ex_med",
+    "chargeoff_within_12_mths",
+
+    # credit activity
+    "open_acc",
+    "total_acc",
+    "mort_acc",
+    "inq_last_6mths",
+    "acc_open_past_24mths",
+    "num_rev_accts",
+    "num_il_tl",
+
+    #Credit account info
+    "revol_bal",
+    "revol_util",
+    "total_bc_limit",
+    "bc_util"
+]
+
+cat_pred = [
+    "term",
+    "region",
+    "home_ownership",
+]
+
+flag_pred = [
+    "joint_flag",
+    "hardship_flag",
+    "verified_flag",
+    "whole_loan_flag"
+]
+
+#Post 2016 only variables
+credit_util_2016_pred = [
+    "il_util",
+    "mths_since_rcnt_il",
+    "all_util",
+    "max_bal_bc",
+    "total_bal_il",
+]
+
+#Additional variables to be included for XGBoost
+xgboost_pred = [
+    #Credit account info
+    "total_bal_ex_mort",
+    "avg_cur_bal",
+    "percent_bc_gt_75",
+    "bc_open_to_buy",
+    "total_rev_hi_lim",
+    "total_bc_limit",
+    "total_il_high_credit_limit",
+]
+
+#Additional variables for XGBoost - only post-2016
+xgboost_credit_util_2016_pred = [
+    "inq_last_12m",
+    "total_cu_tl",
+    "open_il_24m",
+    "open_il_12m",
+    "open_act_il",
+    "open_rv_24m",
+    "open_rv_12m",
+    "inq_fi",
+    "open_acc_6m",
+]
+```
+
+
+### Notable Choices for Features
+
+Here are some useful notes about some notable features that were 
+included/omitted:
+
+- Hardship information: binary `hardship_flag` was included because 
+entering a hardship agreement impacted loss
+- settlement information: not included because it is unclear if 
+settlements occurred before, during, or after recovery efforts began
+
+## Modeling
+
+```{python}
+import numpy as np
+import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error
+import xgboost as xgb
+import shap
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
+
+df_post2016[credit_util_2016_pred] = (
+    df_post2016[credit_util_2016_pred].fillna(0))
+
+#Function to print output of fractional logit
+def print_lgd_model_output(name, model_results, X_test, y_test):
+    
+    # Add constant for prediction
+    X_test_sm = sm.add_constant(X_test, has_constant="add")
+
+    # Predict LGD
+    y_pred = model_results.predict(X_test_sm)
+
+    # MAE
+    mae = mean_absolute_error(y_test, y_pred)
+
+    print(f"\n{name} MAE: {mae:.4f}")
+
+    print("\nPredicted LGD Summary:")
+    print(pd.Series(y_pred).describe())
+
+    print("\nModel Summary:")
+    print(model_results.summary())
+
+#Function to encode categorical predictors
+def encode_categoricals(X, pred_cat):
+    X = pd.get_dummies(
+        X,
+        columns=pred_cat,
+        drop_first=True
+    )
+    return X
+
+#Function to split training/testing data
+def split_xy(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=42
+    )
+    return X_train, X_test, y_train, y_test
+
+
+# Function to scale non-flag numeric predictors
+def standardize_non_flags(X_train, X_test, scale_vars):
+    scaler = StandardScaler()
+
+    X_train.loc[:, scale_vars] = scaler.fit_transform(X_train[scale_vars])
+    X_test.loc[:, scale_vars]  = scaler.transform(X_test[scale_vars])
+
+    return X_train, X_test, scaler
+
+
+# Function to fit fractional logit model
+def fit_fractional_logit(X_train, y_train):
+
+    X_train_sm = sm.add_constant(X_train, has_constant="add")
+
+    model = sm.GLM(
+        y_train,
+        X_train_sm,
+        family=sm.families.Binomial(link=sm.families.links.logit())
+    )
+
+    results = model.fit(cov_type="HC3")
+    return results
+
+#Function to preprocess data for XGBoost
+def prep_xgb_matrix(df, predictors, cat_pred):
+
+    X = df[predictors].copy()
+
+    # Encode categoricals
+    X = pd.get_dummies(X, columns=cat_pred, drop_first=True)
+
+    # Replace inf from ratios
+    X.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    # XGBoost handles 0 well; use 0 for structural missingness
+    X = X.fillna(0)
+
+    return X.astype(float)
+
+#Function to fit XGBoost model
+def fit_xgboost_lgd(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    params=None,
+    num_boost_round=500,
+    early_stopping_rounds=50,
+    verbose=False,
+    name="XGBoost LGD"
+):
+    
+
+    # Parameters
+    if params is None:
+        params = {
+            "objective": "reg:squarederror",
+            "eval_metric": "mae",
+            "learning_rate": 0.05,
+            "max_depth": 4,
+            "min_child_weight": 50,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "seed": 42,
+        }
+
+    # DMatrix
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dtest  = xgb.DMatrix(X_test, label=y_test)
+
+    evals = [(dtrain, "train"), (dtest, "test")]
+
+    # Train
+    model = xgb.train(
+        params=params,
+        dtrain=dtrain,
+        num_boost_round=num_boost_round,
+        evals=evals,
+        early_stopping_rounds=early_stopping_rounds,
+        verbose_eval=verbose
+    )
+
+    # Predict
+    y_pred = model.predict(dtest).clip(0, 1)
+
+    # Metrics
+    mae = mean_absolute_error(y_test, y_pred)
+
+    print(f"\n{name}")
+    print(f"MAE: {mae:.4f}")
+
+    return {
+        "model": model,
+        "mae": mae,
+        "y_pred": y_pred
+    }
+
+#Function to fit PyTorch neural network
+def fit_pytorch_lgd(
+    X_train,
+    y_train,
+    X_test,
+    y_test,
+    hidden_sizes=(128, 64),
+    lr=0.001,
+    batch_size=1024,
+    epochs=20,
+    weight_decay=0.0,
+    name="PyTorch LGD"
+):
+
+
+    # Convert to torch tensors
+    X_train_t = torch.tensor(X_train, dtype=torch.float32)
+    y_train_t = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
+
+    X_test_t = torch.tensor(X_test, dtype=torch.float32)
+    y_test_t = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
+
+    train_ds = TensorDataset(X_train_t, y_train_t)
+    test_ds  = TensorDataset(X_test_t, y_test_t)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    test_loader  = DataLoader(test_ds, batch_size=4096, shuffle=False)
+
+    # Model definition
+    layers = []
+    input_dim = X_train.shape[1]
+
+    for h in hidden_sizes:
+        layers.append(nn.Linear(input_dim, h))
+        layers.append(nn.ReLU())
+        layers.append(nn.BatchNorm1d(h))
+        input_dim = h
+
+    layers.append(nn.Linear(input_dim, 1))
+    layers.append(nn.Sigmoid())  # enforce LGD is in [0,1]
+
+    model = nn.Sequential(*layers)
+
+    # Training setup
+    criterion = nn.L1Loss()  # MAE loss
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay
+    )
+
+    # Training loop
+    model.train()
+    for epoch in range(epochs):
+        for xb, yb in train_loader:
+            optimizer.zero_grad()
+            preds = model(xb)
+            loss = criterion(preds, yb)
+            loss.backward()
+            optimizer.step()
+
+    # Evaluation
+    model.eval()
+    preds = []
+
+    with torch.no_grad():
+        for xb, _ in test_loader:
+            preds.append(model(xb).numpy())
+
+    y_pred = np.vstack(preds).flatten().clip(0, 1)
+
+    mae = mean_absolute_error(y_test, y_pred)
+
+    print(f"\n{name}")
+    print(f"MAE: {mae:.4f}")
+
+    return {
+        "model": model,
+        "mae": mae,
+        "y_pred": y_pred
+    }
+
+# Print SHAP values of XGBoost models
+def print_xgboost_shap(
+    model,
+    X,
+    feature_names,
+    top_n=5,
+    name="XGBoost LGD"
+):
+
+    # Compute SHAPs
+    explainer = shap.TreeExplainer(model)
+    shap_values = explainer.shap_values(X)
+
+    shap_values = np.asarray(shap_values)
+
+    # Importance + direction
+    mean_abs_shap = np.abs(shap_values).mean(axis=0)
+    mean_shap = shap_values.mean(axis=0)
+
+    shap_df = pd.DataFrame({
+        "feature": feature_names,
+        "mean_abs_shap": mean_abs_shap,
+        "direction": np.where(
+            mean_shap > 0,
+            "↑ increases LGD",
+            "↓ decreases LGD"
+        )
+    }).sort_values("mean_abs_shap", ascending=False)
+
+    # Print output
+    print(f"\n{name} — Top {top_n} SHAP Drivers of LGD\n")
+    print(shap_df.head(top_n).to_string(index=False))
+
+```
+
+### Pre-2016
+
+#### Fractional Logit
+
+```{python}
+TARGET = "lgd"
+
+predictors = num_pred + cat_pred + flag_pred
+
+X = df_pre2016[predictors].copy()
+y = df_pre2016[TARGET].astype(float).clip(0, 1)
+
+
+#Encode categoricals
+X = encode_categoricals(X, cat_pred)
+
+
+# Train/test split
+X_train, X_test, y_train, y_test = split_xy(X, y)
+
+
+# Standardize non-flag numerics
+X_train, X_test, scaler = standardize_non_flags(
+    X_train,
+    X_test,
+    scale_vars=num_pred
+)
+
+X_train = X_train.astype(float)
+X_test  = X_test.astype(float)
+
+#Fit model
+fl_pre2016 = fit_fractional_logit(X_train, y_train)
+
+
+# Print output
+print_lgd_model_output(
+    name="Pre-2016 Fractional Logit LGD",
+    model_results=fl_pre2016,
+    X_test=X_test,
+    y_test=y_test
+)
+```
+
+#### PyTorch Neural Network
+
+```{python}
+nn_out = fit_pytorch_lgd(
+    X_train=X_train.values,
+    y_train=y_train.values,
+    X_test=X_test.values,
+    y_test=y_test.values,
+    name="Pre-2016 PyTorch LGD"
+)
+```
+
+#### XGBoost
+
+```{python}
+#Define predictors
+xgb_pre_predictors = (
+    num_pred
+    + xgboost_pred
+    + cat_pred
+    + flag_pred
+)
+
+X_pre = prep_xgb_matrix(df_pre2016, xgb_pre_predictors, cat_pred)
+y_pre = df_pre2016[TARGET].astype(float).clip(0, 1)
+
+X_train_pre, X_test_pre, y_train_pre, y_test_pre = train_test_split(
+    X_pre, y_pre, test_size=0.2, random_state=42
+)
+
+# Fit model
+xgb_pre_out = fit_xgboost_lgd(
+    X_train=X_train_pre.values,
+    y_train=y_train_pre.values,
+    X_test=X_test_pre.values,
+    y_test=y_test_pre.values,
+    name="Pre-2016 XGBoost LGD"
+)
+```
+
+The 3 model types performed just about evenly for predicted loss given 
+default for pre-2016 loans, with Fractional Logit and XGBoost slightly 
+outperforming the PyTorch neural network. For this time period, these 
+models are able to predict the loss of a defaulted loan within roughly 22 
+percentage points of the true loss proportion on average.
+
+```{python}
+#Print SHAP values for XGBoost
+print_xgboost_shap(
+    model=xgb_pre_out["model"],
+    X=X_test_pre.values,
+    feature_names=X_test_pre.columns.tolist(),
+    name="Pre-2016 XGBoost LGD"
+)
+```
+
+Here, the most important predictors were the term of the loan, the number 
+of credit accounts the borrower opened within the last 2 years, the 
+number of current open credit accounts, the length of employment of the 
+borrower, and the interest rate of the loan.
+
+### Post-2016
+
+#### Fractional Logit
+```{python}
+#Define predictors
+predictors = (
+    num_pred
+    + credit_util_2016_pred   # <-- post-2016-only vars included
+    + cat_pred
+    + flag_pred
+)
+
+X = df_post2016[predictors].copy()
+y = df_post2016[TARGET].astype(float).clip(0, 1)
+
+
+# Encode categoricals
+X = encode_categoricals(X, cat_pred)
+
+
+# Train/test split
+X_train, X_test, y_train, y_test = split_xy(X, y)
+
+
+# Standardize non-flag numerics
+X_train, X_test, scaler = standardize_non_flags(
+    X_train,
+    X_test,
+    scale_vars=num_pred + credit_util_2016_pred
+)
+
+
+# Fix types
+X_train = X_train.astype(float)
+X_test  = X_test.astype(float)
+
+
+# Fit model
+fl_post2016 = fit_fractional_logit(X_train, y_train)
+
+
+# Print output
+print_lgd_model_output(
+    name="Post-2016 Fractional Logit LGD",
+    model_results=fl_post2016,
+    X_test=X_test,
+    y_test=y_test
+)
+```
+
+#### PyTorch Neural Network
+
+```{python}
+#PyTorch model uses the same variables as fractional logit
+nn_out = fit_pytorch_lgd(
+    X_train=X_train.values,
+    y_train=y_train.values,
+    X_test=X_test.values,
+    y_test=y_test.values,
+    name="Post-2016 PyTorch LGD"
+)
+```
+
+#### XGBoost
+
+```{python}
+# Define predictors
+xgb_post_predictors = (
+    num_pred
+    + xgboost_pred
+    + xgboost_credit_util_2016_pred
+    + cat_pred
+    + flag_pred
+)
+
+X_post = prep_xgb_matrix(df_post2016, xgb_post_predictors, cat_pred)
+y_post = df_post2016[TARGET].astype(float).clip(0, 1)
+
+# Train/test split
+X_train_post, X_test_post, y_train_post, y_test_post = train_test_split(
+    X_post, y_post, test_size=0.2, random_state=42
+)
+
+# Fit model
+xgb_post_out = fit_xgboost_lgd(
+    X_train=X_train_post.values,
+    y_train=y_train_post.values,
+    X_test=X_test_post.values,
+    y_test=y_test_post.values,
+    name="Post-2016 XGBoost LGD"
+)
+```
+
+The inclusion of credit utilization data signficiantly changed and 
+improved each model's performanceas shown by the smaller mean absoute 
+errors for each of the three. XGBoost performed the best with an MAE of 
+0.162 compared to that of the fractional logit and PyTorch models (~0.175 
+for both), and this number is much improved from the pre-2016 models.
+
+The statistically significant predictors for the fractional logit model 
+were different for the pre-2016 and post-2016 models. This confirms the 
+fact that the inclusion of the credit utilization data gave the model more 
+predictive power and is more accurate to the real world relationships that 
+exist.
+
+```{python}
+#Print SHAP values for XGBoost
+print_xgboost_shap(
+    model=xgb_post_out["model"],
+    X=X_test_post.values,
+    feature_names=X_test_post.columns.tolist(),
+    name="Post-2016 XGBoost LGD"
+)
+```
+
+For the post-2016 model, the most important predictor of loss was the 
+interest rate of the loan, with other important predictors being the term 
+of the loan, the low range of the borrower's FICO score, the length of 
+employment of the borrower, and the number of total open credit accounts.
+
+
+
+
+
+
+
+
+
+
+
+
+
