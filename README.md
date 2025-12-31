@@ -4,9 +4,12 @@ End-to-end credit risk modeling project using LendingClub data.
 
 **Tools**
 - Python
-- PyTorch (later)
+  - Pandas
+  - NumPy
+  - Scikit-learn
+  - PyTorch
+  - Statsmodels
 - AWS S3
-- pandas / scikit-learn
 
 **Goal**
 Predict probability of default (PD) at loan origination using historical 
@@ -16,7 +19,6 @@ Raw data is stored securely in AWS S3 and loaded programmatically.
 
 This project will model the following three systems:
 
-- Probability of Hardship (PH)
 - Probability of Default (PD)
 - Loss Given Default (LGD)
 
@@ -138,7 +140,7 @@ credit report.
 opened.
 - `all_util`: Aggregate utilization rate across all credit accounts.
 - `open_acc_6m`: Number of open credit accounts in the past 6 months.
-- `inq_last_6m`: Number of credit inquiries in the past 6 months.
+- `inq_last_6mths`: Number of credit inquiries in the past 6 months.
 - `inq_last_12m`: Number of credit inquiries in the past 12 months.
 - `total_cu_tl`: Number of currently utilized trade lines.
 - `open_il_24m`: Number of installment loans opened in the past 24 months.
@@ -267,7 +269,7 @@ line, representing the length of the borrower’s credit history.
 public record event.
 - `mths_since_recent_bc_dlq_flag`: Indicator of whether the borrower has a 
 bankcard delinquency.
-- `	mths_since_last_major_derog_flag`: Indicator of whether the borrower 
+- `mths_since_last_major_derog_flag`: Indicator of whether the borrower 
 has a major derogatory credit event.
 - `mths_since_recent_revol_delinq_flag`: Indicator of whether the borrower 
 has a revolving account delinquency.

@@ -10,8 +10,8 @@ execute:
 
 ## Purpose
 
-This notebook performs initial data inspection for the LendingClub credit 
-risk dataset.
+This notebook performs initial data inspection for the LendingClub 
+credit risk dataset.
 
 ## Setup
 
@@ -31,14 +31,7 @@ accepted = pd.read_csv(
     low_memory=False
 )
 
-# rejected loan data (load if needed later)
-#rejected = pd.read_csv(
-#    DATA_DIR / "rejected_2007_to_2018Q4.csv.gz",
-#    low_memory=False
-#)
-
 accepted.shape
-#rejected.shape
 ```
 
 ### Drop unnecessary columns from accepted
@@ -159,15 +152,15 @@ same_rows
 ```
 
 These are all, in fact, coincident, meaning a missing value means an 
-individual did not experience hardship, whereas present data means he/she 
-did.
+individual did not experience hardship, whereas present data means 
+he/she did.
 
 
-`orig_projected_additional_accrued_interest` has more missing values than 
-the other hardship variables. This is either because this calculation was 
-made at a later date than when the hardship period began, or it is because 
-there are some hardship plans that freeze interest or only defer the 
-principal.
+`orig_projected_additional_accrued_interest` has more missing values 
+than the other hardship variables. This is either because this 
+calculation was made at a later date than when the hardship period 
+began, or it is because there are some hardship plans that freeze 
+interest or only defer the principal.
 
 ```{python}
 print(accepted["hardship_flag"].value_counts().sort_index())
@@ -176,12 +169,12 @@ print(accepted["hardship_flag"].value_counts().sort_index())
 There were 2,259,836 cases originally labelled as "No hardship" by the 
 data curator but there were 2,249,751 instances of missing data for our 
 hardship variables, meaning there are roughly 10,000 cases where a row 
-has data for hardship variables but was classified as "No hardship". This 
-difference can be explained by the fact that some hardship cases may not 
-have formally approved or a hardship was cancelled early, so this project 
-will fill `hardship_flag` as Y if there is data for these hardship 
-variables and keep it as 'N' if there is no data (overruling original 
-`hardship_flag` designation)
+has data for hardship variables but was classified as "No hardship". 
+This difference can be explained by the fact that some hardship cases 
+may not have formally approved or a hardship was cancelled early, so 
+this project will fill `hardship_flag` as Y if there is data for these 
+hardship variables and keep it as 'N' if there is no data (overruling 
+original `hardship_flag` designation)
 
 ```{python}
 import numpy as np
@@ -216,15 +209,12 @@ print(accepted["hardship_flag"].value_counts().sort_index())
 Now there are ~11,000 hardship cases, which will make modeling easier 
 later on.
 
-Hardship will not be a predictor 
-variable for PD modeling. We are trying to predict a borrower's risk of 
-defaulting on a loan at the time of applying, and because hardship is an 
-event that occurs post-application, there would be severe leakage if this 
-was included as a predictor. We will keep the individual hardship 
-variables in the dataset to see if there are any macroeconomic conditions 
-that increase risk of different types of hardship for the PH model. 
-Additionally, hardship will be a predictor in the LGD models, as hardship 
-is an event that occurs before defaulting.
+Hardship will not be a predictor variable for PD modeling. We are trying 
+to predict a borrower's risk of defaulting on a loan at the time of 
+applying, and because hardship is an event that occurs 
+post-application,  there would be severe leakage if this was included 
+as a predictor. Additionally, hardship will be a predictor in the LGD 
+models, as hardship is an event that occurs before defaulting.
 
 
 #### Debt Settlement Variables
@@ -244,8 +234,8 @@ print_missing(accepted[cols])
 ```
 
 Again, all of the debt settlement variables exlcuding 
-`debt_settlement_flag` have the same number of missing values (2,226,422).
-We will once again check for coincidence:
+`debt_settlement_flag` have the same number of missing values 
+(2,226,422). We will once again check for coincidence:
 
 ```{python}
 # check for coincidence
@@ -260,10 +250,10 @@ accepted.loc[rows_non_missing, cols_debt_missing].notna().all().all())
 print(same_rows)
 ```
 
-Here, missingness just means no settlement occurred, meaning the borrower 
-did not ever default. Present data in these rows means that the borrower 
-defaulted badly enough to negotiate a payment less than the amount that 
-was originally owed.
+Here, missingness just means no settlement occurred, meaning the 
+borrower did not ever default. Present data in these rows means that the 
+borrower defaulted badly enough to negotiate a payment less than the 
+amount that was originally owed.
 
 ```{python}
 print(accepted["debt_settlement_flag"].value_counts().sort_index())
@@ -273,7 +263,7 @@ The number of "No settlements", matches the number of missing values for
 debt settlement variables, so the `debt_settlement_flag` variable is 
 consistent with the data.
 
-None of the debt settlement variables will be used in PD or PH modeling, 
+None of the debt settlement variables will be used in PD modeling, 
 as these are also post-application events (these even occur after 
 deliquency). These variables will only be included in LGD models.
 
@@ -302,8 +292,8 @@ cols = [
 print_missing(accepted[cols])
 ```
 
-The following secondary applicant/ joint loan variables all have the same 
-number of missing values (2,152,647):
+The following secondary applicant/ joint loan variables all have the 
+same number of missing values (2,152,647):
 
 -`sec_app_revol_util`
 -`revol_bal_joint`
@@ -342,18 +332,18 @@ print(same_rows)
 
 For the first group, missingness indicates an individual loan. 
 `sec_app_mths_since_last_major_derog` has more missing values than these 
-variables, meaning there were some joint loans where the second applicant 
-did not have a major derogatory credit event (~72,000). 
+variables, meaning there were some joint loans where the second 
+applicant did not have a major derogatory credit event (~72,000). 
 `sec_app_revol_util` has slightly more missing values (~1,800), meaning 
 some joint applications have no revolving credit. 
 `verification_status_joint` has slightly fewer missing values (~7,800 
-less), meaning it has data even if `sec_app_*` does not have data, and the 
-same goes for `dti_joint` and `annual_inc_joint` (~13,000 less each).
+less), meaning it has data even if `sec_app_*` does not have data, and 
+the same goes for `dti_joint` and `annual_inc_joint` (~13,000 less each).
 
 
-We fill a binary variable called `joint_flag` using the `application_type` 
-variable, which is consistent with the data that exists for 
-`annual_inc_joint`.
+We fill a binary variable called `joint_flag` using the 
+`application_type` variable, which is consistent with the data that 
+exists for `annual_inc_joint`.
 
 
 ```{python}
@@ -368,9 +358,9 @@ accepted["application_type"] == "Joint App").astype(int)
 accepted = accepted.drop(columns=["application_type"])
 ```
 
-`joint_flag` will be used as a predictor for all of the PH, PD, and LGD 
-models, while `annual_inc_joint`, `dti_joint`, and some of the `sec_app_*` 
-variables will only be used as predictors in the LGD model.
+`joint_flag` will be used as a predictor for the PD and LGD 
+models, while `annual_inc_joint`, `dti_joint`, and some of the 
+`sec_app_*` variables will only be used as predictors in the LGD models.
 
 
 #### Deliquency and Credit History Timing Variables
@@ -396,8 +386,8 @@ cols = [
 print_missing(accepted[cols])
 ```
 
-For each of these variables, missingness indicates that these events never 
-occurred for that borrower:
+For each of these variables, missingness indicates that these events 
+never occurred for that borrower:
 
 -`mths_since_last_record` (~84% missing)
 -`mths_since_recent_bc_dlq` (~78%)
@@ -411,7 +401,8 @@ that occurred for a secondary applicant appear under the joint loan
 variables.
 
 We will create a flag variable for each of these columns (useful for 
-linear modeling later), and we'll fill the missing values with a sentinel 
+linear modeling later), and we'll fill the missing values with a 
+sentinel 
 value of 999.
 
 ```{python}
@@ -432,7 +423,8 @@ for col in mths_cols:
     accepted[col] = accepted[col].fillna(999)
 ```
 
-These variables, however, have present values for 0s but also have a small 
+These variables, however, have present values for 0s but also have a 
+small 
 proportion of missing data:
 - `collections_12_mths_ex_med` 
 - `acc_now_delinq` 
@@ -444,9 +436,9 @@ proportion of missing data:
 - `tax_liens` 
 - `delinq_2yrs`
 
-Because there is such a small fraction of missing values for these, we will 
-assume that missingness is just representative of "did not occur", so 
-we'll fill these with 0s.
+Because there is such a small fraction of missing values for these, we 
+will assume that missingness is just representative of "did not occur", 
+so we'll fill these with 0s.
 
 ```{python}
 cols = [
@@ -464,11 +456,11 @@ cols = [
 accepted[cols] = accepted[cols].fillna(0)
 ```
 
-The deliquency variables will be used as predictors in for all PH, PD, and 
-LGD models, with both the flag variables and actual values being used for 
-all models (linear and non-linear). `delinq_2yrs`, `acc_now_delinq`
-`collections_12_mths_ex_med`, `chargeoff_within_12_mths`, and 
-`delinq_amnt` will remain as-is.
+The deliquency variables will be used as predictors in for both the PD, 
+and LGD models, with both the flag variables and actual values being 
+used for all models (linear and non-linear). `delinq_2yrs`, 
+`acc_now_delinq`, `collections_12_mths_ex_med`, 
+`chargeoff_within_12_mths`, and `delinq_amnt` will remain as-is.
 
 #### Borrower Description Field
 
@@ -626,12 +618,12 @@ cols = ["emp_title", "emp_length", "annual_inc", "dti"]
 print_missing(accepted[cols])
 ```
 
-There are only 4 missing values for `annual_inc`, 113 for `dti`, and only 
-6.5% of rows are missing `emp_length`. We will safely drop the rows where 
-either of the two are missing, as our sample size is still large enough 
-and there is such a small proportion of observations missing these values. 
-We will also drop the `emp_title` variable entirely, as it will not be 
-useful for modeling.
+There are only 4 missing values for `annual_inc`, 113 for `dti`, and 
+only 6.5% of rows are missing `emp_length`. We will safely drop the rows 
+where either of the two are missing, as our sample size is still large 
+enough and there is such a small proportion of observations missing 
+these values. We will also drop the `emp_title` variable entirely, as it 
+will not be useful for modeling.
 
 ```{python}
 # drop emp_title column
@@ -699,8 +691,8 @@ For `num_tl_120dpd_2m` and `mo_sin_old_il_acct`, missingness indicates
 missing values with 0 for the former, and we'll create a flag variable 
 for the latter while also filling missing values with a neutral value. 
 This preserves these observations while maintaining interpretability 
-for modeling. We can also fill missing `revol_util` values with 0, as this 
-indicates the borrower has no revolving credit accounts.
+for modeling. We can also fill missing `revol_util` values with 0, as 
+this indicates the borrower has no revolving credit accounts.
 
 ```{python}
 accepted["num_tl_120dpd_2m"] = (
@@ -723,8 +715,8 @@ accepted["mo_sin_old_il_acct"] = (
 accepted["revol_util"] = accepted["revol_util"].fillna(0)
 ```
 
-We'll check if the missing values of all the variables with exactly 68,211 
-missing values are conincident.
+We'll check if the missing values of all the variables with exactly 68, 
+211 missing values are conincident.
 
 ```{python}
 # columns with exactly 68,211 missing values
@@ -739,8 +731,9 @@ is_coincident = accepted[cols_68211].isna().all(axis=1).sum() == 68211
 print(is_coincident)
 ```
 
-The missingness of these variables is coincident, and since they only make 
-up ~3% of observations, we will drop these from the dataset for simplicity.
+The missingness of these variables is coincident, and since they only 
+make up ~3% of observations, we will drop these from the dataset for 
+simplicity.
 
 ```{python}
 cols_68211 = accepted.isna().sum().eq(68211)
@@ -798,9 +791,9 @@ print_missing(accepted[cols])
 
 Where `next_pyment_d` is missing, this indicates a completed loan. 
 `last_pyment_d` missing likely indicates a newly issued load (as of the 
-publication of the data), so these will be dropped since they will not be 
-useful for modeling. The rest of the payment variables do not have any 
-missing values.
+publication of the data), so these will be dropped since they will not 
+be useful for modeling. The rest of the payment variables do not have 
+any missing values.
 
 ```{python}
 # drop rows where next and last payment is missing
@@ -825,8 +818,8 @@ cols = [
 print_missing(accepted[cols])
 ```
 
-`zip_code` will not be useful for modeling, so we can drop this column. We 
-should look at the status of the loans in the dataset:
+`zip_code` will not be useful for modeling, so we can drop this column. 
+We should look at the status of the loans in the dataset:
 
 ```{python}
 accepted = accepted.drop(columns=["zip_code"])
@@ -870,8 +863,14 @@ modeling.
 ```{python}
 state_to_region = {
     # Northeast
-    "CT": "Northeast", "ME": "Northeast", "MA": "Northeast", "NH": "Northeast",
-    "RI": "Northeast", "VT": "Northeast", "NJ": "Northeast", "NY": "Northeast",
+    "CT": "Northeast", 
+    "ME": "Northeast", 
+    "MA": "Northeast", 
+    "NH": "Northeast",
+    "RI": "Northeast", 
+    "VT": "Northeast", 
+    "NJ": "Northeast", 
+    "NY": "Northeast",
     "PA": "Northeast",
 
     # Midwest
@@ -979,7 +978,8 @@ accepted = accepted.drop(
 
 # drop post-origination credit check variables
 accepted = accepted.drop(
-    columns=["last_credit_pull_d", "last_fico_range_low", "last_fico_range_high"]
+    columns=(
+        ["last_credit_pull_d", "last_fico_range_low", "last_fico_range_high"])
 )
 
 # drop policy code column
@@ -1001,7 +1001,8 @@ accepted["sec_app_earliest_cr_line"] = pd.to_datetime(
 )
 
 # Change hardship_flag to binary (1 = hardship, 0 = no hardship)
-accepted["hardship_flag"] = (accepted["hardship_flag"] == "Y").astype(int)
+accepted["hardship_flag"] = (
+    accepted["hardship_flag"] == "Y").astype(int)
 
 # Drop hardship_type
 accepted = accepted.drop(columns=["hardship_type"])

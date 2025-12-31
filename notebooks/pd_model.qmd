@@ -72,7 +72,7 @@ pred_num = [
     "chargeoff_within_12_mths",
     "tax_liens",
 
-    # utilization / balances
+    # credit account info
     "revol_bal",
     "revol_util",
     "total_bal_ex_mort",

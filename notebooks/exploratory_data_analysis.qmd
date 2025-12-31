@@ -610,8 +610,8 @@ plt.tight_layout()
 plt.show()
 ```
 
-For non-current loans, the number of hardship periods spiked in October of 
-2017.
+For non-current loans, the number of hardship periods spiked in October 
+of 2017.
 
 ## Loss After Borrowers Default
 
