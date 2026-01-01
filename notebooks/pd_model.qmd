@@ -10,8 +10,8 @@ execute:
 
 ## Purpose
 
-This notebook will perform feature selection, model building, and evaluate 
-the performance of the Probability of Default (PD) model
+This notebook will perform feature selection, model building, and 
+evaluate the performance of the Probability of Default (PD) model
 
 ## Setup
 
@@ -54,9 +54,7 @@ pred_num = [
 
     # loan structure
     "loan_amnt",
-    "funded_amnt",
-    "int_rate",
-
+  
     # borrower capacity
     "annual_inc",
     "emp_length",
@@ -197,6 +195,8 @@ The following features will not be included as predictors because they are
 post-origination variables (would result in leakage) or because they are 
 calculated using other features:
 
+- `int_rate`: already contains information about riskiness of loan given 
+the borrower's characteristics
 - `grade`: calculated using other predictors
 - all hardship variables: post-origination
 - all settlement variables: post-origination
@@ -465,9 +465,9 @@ meaning each model performed decently at classifying default risk.
 Technically speaking, if you were to random pick out one defaulted loan 
 and one non-defaulted loan, the models will assign a higher predicted probablity of default to the defaulted loan about 72% of the time.
 
-The XGBoost model had the highest recall for defaulted loans (0.67 
-compared to 0.64 and 0.59 for logistic regression and random forest 
-respectively), meaning that it captured 67% of true defaults 67%, and 
+The XGBoost model had the highest recall for defaulted loans (0.65 
+compared to 0.56 and 0.63 for logistic regression and random forest 
+respectively), meaning that it captured 65% of true defaults, and 
 those that it did classify as likely to default were 35% accurate. In 
 deploying this model, there are higher costs associated with false 
 negatives and lower costs with false positives, so I would recommend 
@@ -475,10 +475,10 @@ the XGBoost model over the other 2 because it is less conservative with
 labeling borrowers as risky.
 
 The most important features in predicting risk of default were the 
-interest rate of the loan, the debt-to-income ratio of the borrower, the 
-value of the loan, the term of the loan  and the low range of the 
-borrower's FICO score. Of these, interest rate was by far the most 
-impactful predictor.
+term rate of the loan, the number of accounts opened in the past 2 years, 
+the low range of the borrower's FICO score, the debt-to-income ratio of 
+the borrower, and the amount of the loan. Of these, interest rate was by 
+far the most impactful predictor.
 
 
 ### Logistic Regression
@@ -603,7 +603,6 @@ pre-2016 XGBoost model.
 
 The most important features were almost exactly the same as the pre-2016 
 model, though this time the number of mortgage accounts the borrower had 
-was one of the top five most important predictors instead of the low range 
-of the borrower's FICO score.
-
+was one of the top five most important predictors instead of the number 
+of accounts opened in the past 2 years.
 
