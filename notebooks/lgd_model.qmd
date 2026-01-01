@@ -13,13 +13,6 @@ execute:
 This notebook will perform feature selection, model building, and evaluate 
 the performance of the Loss Given Default (LGD) model.
 
-To do:
-- model LGD using Fractional Logit regressor, xgboost regressor, and 
-pytorch
-- combine PD and LGD models for expected loss
-- change previous files to show i am not longer doing PH model
-- add deliverables for stakeholders to repo
-
 ## Setup
 
 ```{python}
@@ -700,9 +693,9 @@ for both), and this number is much improved from the pre-2016 models.
 
 The statistically significant predictors for the fractional logit model 
 were different for the pre-2016 and post-2016 models. This confirms the 
-fact that the inclusion of the credit utilization data gave the model more 
-predictive power and is more accurate to the real world relationships that 
-exist.
+fact that the inclusion of the credit utilization data gave the model 
+more predictive power and is more accurate to the real world 
+relationships that exist. 
 
 ```{python}
 #Print SHAP values for XGBoost
