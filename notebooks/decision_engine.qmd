@@ -1,0 +1,189 @@
+---
+title: "Credit Risk Decision Engine"
+author: "Jacob Schlessel"
+format: html
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Purpose
+
+This notebook will build the decision engine for evaluating loans based 
+on the probability of default (PD) model.
+
+## Setup
+
+For the decision engine, the model will be used to predict the outcomes of 
+post-2016, current loans whose outcomes have not yet been realized (as of 
+the publication of the LendingClub Dataset).
+
+
+```{python}
+import pandas as pd
+import joblib
+
+# Load data
+df = pd.read_parquet(
+    "../data/processed/accepted_clean.parquet",
+    engine="pyarrow"
+)
+
+# Filter to post-2016, current loans
+df = df.loc[
+    (df["current_flag"] == 1) &
+    (df["issue_d"].dt.year >= 2016)
+].copy()
+
+# Load model artifacts
+ARTIFACT_DIR = "../artifacts"
+
+xgb_model = joblib.load(f"{ARTIFACT_DIR}/xgb_post2016.pkl")
+calibrated_model = joblib.load(f"{ARTIFACT_DIR}/xgb_post2016_calibrated.pkl")
+model_features = joblib.load(f"{ARTIFACT_DIR}/model_features_post2016.pkl")
+```
+
+```{python}
+# Function to rebuild engineered features
+def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # Joint conditionals
+    joint_numeric_pred = [
+        "sec_app_mths_since_last_major_derog",
+        "sec_app_revol_util",
+        "revol_bal_joint",
+        "sec_app_open_acc",
+        "sec_app_num_rev_accts",
+        "sec_app_inq_last_6mths",
+        "sec_app_mort_acc",
+        "sec_app_open_act_il",
+        "sec_app_fico_range_low",
+        "sec_app_fico_range_high",
+        "sec_app_chargeoff_within_12_mths",
+        "sec_app_collections_12_mths_ex_med",
+        "dti_joint",
+        "annual_inc_joint"
+    ]
+
+    for var in joint_numeric_pred:
+        df[var] = df[var].fillna(0)
+        df[f"{var}_active"] = df["joint_flag"] * df[var]
+
+    # delquency interactions
+    flag_to_var = {
+        "mths_since_last_record_flag": "mths_since_last_record",
+        "mths_since_recent_bc_dlq_flag": "mths_since_recent_bc_dlq",
+        "mths_since_last_major_derog_flag": "mths_since_last_major_derog",
+        "mths_since_recent_revol_delinq_flag": "mths_since_recent_revol_delinq",
+        "mths_since_last_delinq_flag": "mths_since_last_delinq",
+    }
+
+    for flag, var in flag_to_var.items():
+        df[var] = df[var].replace(999, 0).fillna(0)
+        df[f"{var}_active"] = df[flag] * df[var]
+
+    # Credit utilization
+    recent_credit_vars_2016 = [
+        "il_util", "mths_since_rcnt_il", "all_util",
+        "open_acc_6m", "inq_last_12m", "total_cu_tl",
+        "open_il_24m", "open_il_12m", "open_act_il",
+        "max_bal_bc", "inq_fi", "total_bal_il",
+        "open_rv_24m", "open_rv_12m"
+    ]
+
+    for col in recent_credit_vars_2016:
+        df[col] = df[col].fillna(0)
+
+    # Dummy encoding
+    df = pd.get_dummies(
+        df,
+        columns=["term", "region", "home_ownership"],
+        drop_first=True
+    )
+
+    return df
+```
+```{python}
+# Rebuild engineered features
+X_full = build_model_features(df)
+
+# Align columns exactly to what model was trained on
+X = X_full.reindex(columns=model_features, fill_value=0)
+
+print("Feature matrix shape:", X.shape)
+print("Missing columns after alignment:", set(model_features) - set(X_full.columns))
+
+# Predict values of post 2016, noncurrent loans
+pd_calibrated = calibrated_model.predict_proba(X)[:, 1]
+pd_series = pd.Series(pd_calibrated, name="calibrated_pd")
+
+# Add PDs to df
+df_scored = df.copy()
+df_scored["calibrated_pd"] = pd_series.values
+```
+
+
+```{python}
+# Create probability bins
+bins = [0, 0.05, 0.10, 0.20, 1.0]
+labels = ["<5%", "5–10%", "10–20%", ">20%"]
+
+df_scored["risk_bucket"] = pd.cut(
+    df_scored["calibrated_pd"],
+    bins=bins,
+    labels=labels,
+    include_lowest=True
+)
+
+# Summarize model output
+bucket_summary = (
+    df_scored
+    .groupby("risk_bucket")
+    .agg(
+        n_loans=("calibrated_pd", "count"),
+        avg_pd=("calibrated_pd", "mean"),
+        avg_loan_amt=("loan_amnt", "mean")
+    )
+)
+
+bucket_summary["loan_share"] = (
+    bucket_summary["n_loans"] /
+    bucket_summary["n_loans"].sum()
+)
+
+print("\nCurrent Loan Portfolio – Risk Composition:")
+print(bucket_summary)
+```
+
+```{python}
+# Define policy cutoffs
+policies = {
+    "Conservative": 0.05,
+    "Balanced": 0.10,
+    "Aggressive": 0.20
+}
+
+# Calculate policy results
+policy_results = []
+
+for policy_name, cutoff in policies.items():
+    
+    approved = df_scored[df_scored["calibrated_pd"] <= cutoff]
+    rejected = df_scored[df_scored["calibrated_pd"] > cutoff]
+
+    policy_results.append({
+    "policy": policy_name,
+    "pd_cutoff": cutoff,
+    "approval_rate": len(approved) / len(df_scored),
+    "approved_avg_pd": approved["calibrated_pd"].mean(),
+    "approved_avg_loan_amt": approved["loan_amnt"].mean(),
+    "n_approved": len(approved),
+})
+
+
+policy_summary = pd.DataFrame(policy_results).set_index("policy")
+print("\nPolicy Comparison Summary:")
+print(policy_summary)
+```
