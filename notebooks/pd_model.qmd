@@ -698,3 +698,41 @@ risk_buckets = pd.cut(pd_calibrated, bins=bins, labels=labels)
 print("\nRisk Bucket Distribution:")
 print(risk_buckets.value_counts(normalize=True).sort_index())
 ```
+
+It might intially seem problematic that this model is being applied to 
+all post-2016, non-current loans since most of these loans (80%) were 
+used to train the model. However, leakage is not a concern for the 
+application of assigning probabilities and creating a decision engine 
+because we are not evaluating the model's performance (that was done 
+using the testing set), we are simply using the model's predictions to 
+simulate decision-making and seeing summarizing how it can be used to 
+guide policy.
+
+```{python}
+import joblib
+from pathlib import Path
+
+ARTIFACT_DIR = Path("../artifacts")
+ARTIFACT_DIR.mkdir(exist_ok=True)
+
+# Save trained post-2016 XGBoost model
+joblib.dump(
+    xgb_post2016,
+    ARTIFACT_DIR / "xgb_post2016.pkl"
+)
+
+# Save calibrated model
+joblib.dump(
+    calibrated_xgb,
+    ARTIFACT_DIR / "xgb_post2016_calibrated.pkl"
+)
+
+# Save feature list 
+joblib.dump(
+    X.columns.tolist(),
+    ARTIFACT_DIR / "model_features_post2016.pkl"
+)
+
+print("Model artifacts saved.")
+
+```
