@@ -606,3 +606,95 @@ model, though this time the number of mortgage accounts the borrower had
 was one of the top five most important predictors instead of the number 
 of accounts opened in the past 2 years.
 
+## Calibration
+
+```{python}
+# Use the trained post-2016 XGBoost model
+# Predict PDs on the full post-2016 dataset (not just test set)
+pd_post2016 = xgb_post2016.predict_proba(X)[:, 1]
+
+pd_dist = pd.Series(pd_post2016, name="predicted_pd")
+
+# Summary statistics
+print("Predicted Probability of Default — Post-2016 Non-Current Loans\n")
+print(pd_dist.describe(percentiles=[0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]))
+
+# Mean vs observed default rate
+observed_default_rate = df_post2016["default"].mean()
+
+print("\nObserved Default Rate:", round(observed_default_rate, 4))
+print("Average Predicted PD:", round(pd_dist.mean(), 4))
+
+plt.figure(figsize=(10, 6))
+plt.hist(pd_dist, bins=50)
+plt.xlabel("Predicted Probability of Default")
+plt.ylabel("Number of Loans")
+plt.title("Distribution of Predicted PDs\nPost-2016 Non-Current Loans")
+plt.tight_layout()
+plt.show()
+
+# Risk buckets
+bins = [0, 0.05, 0.10, 0.20, 1.0]
+labels = ["<5%", "5–10%", "10–20%", ">20%"]
+
+risk_buckets = pd.cut(pd_dist, bins=bins, labels=labels)
+
+print("\nRisk Bucket Distribution:")
+print(risk_buckets.value_counts(normalize=True).sort_index())
+```
+
+The XGBoost model outputs values between 0 and 1, but these numbers are 
+not necessarily representative of raw probablities of default. Rather, 
+these values can more accurately be described as relative scores assigned 
+to each loan for how likely they are to default compared to other loans 
+in the dataset. The benefit of this is that it generates quality 
+predictions for whether a loan will default or not (binary outcome), but 
+the tradeoff is that it does not generate interpretable probablitlies. In 
+order to get the model to output probabilities that are more accurate to 
+the real-world, it needs to be calibrated so that it aligns with the 
+number of probabilities actually observed in the data. To accomplish this, 
+we will use isotonic calibration.
+
+
+```{python}
+from sklearn.calibration import CalibratedClassifierCV
+
+# Use isotonic calibration
+calibrated_xgb = CalibratedClassifierCV(
+    xgb_post2016,
+    method="isotonic",
+    cv=5
+)
+
+# Fit calibrated model, predict using all data (training and testing) 
+calibrated_xgb.fit(X_train, y_train)
+pd_cal = calibrated_xgb.predict_proba(X)[:, 1]
+
+pd_calibrated = pd.Series(pd_cal, name="predicted_pd_calibrated")
+
+plt.figure(figsize=(10, 6))
+plt.hist(pd_calibrated, bins=50)
+plt.xlabel("Predicted Probability of Default")
+plt.ylabel("Number of Loans")
+plt.title("Distribution of Predicted PDs\nPost-2016 Non-Current Loans")
+plt.tight_layout()
+plt.show()
+
+print("Calibrated Probability of Default — Post-2016 Non-Current Loans\n")
+
+print(
+    pd_calibrated_series.describe(
+        percentiles=[0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
+    )
+)
+
+observed_default_rate = df_post2016["default"].mean()
+
+print("\nObserved Default Rate:", round(observed_default_rate, 4))
+print("Average Calibrated PD:", round(pd_calibrated_series.mean(), 4))
+
+risk_buckets = pd.cut(pd_calibrated, bins=bins, labels=labels)
+
+print("\nRisk Bucket Distribution:")
+print(risk_buckets.value_counts(normalize=True).sort_index())
+```
