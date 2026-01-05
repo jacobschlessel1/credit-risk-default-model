@@ -105,6 +105,8 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 ```
+
+
 ```{python}
 # Rebuild engineered features
 X_full = build_model_features(df)
@@ -124,6 +126,11 @@ df_scored = df.copy()
 df_scored["calibrated_pd"] = pd_series.values
 ```
 
+## Building Decision Engine
+
+To get a sense of how many loans may be considered "risky", we will create 
+different bins of probabilities of defaulting to see how many loans fall 
+into each bin.
 
 ```{python}
 # Create probability bins
@@ -157,6 +164,10 @@ print("\nCurrent Loan Portfolio – Risk Composition:")
 print(bucket_summary)
 ```
 
+There will be 3 levels of risk tolerance in deciding which policy to 
+enact: Conservative, Balanced, and Aggressive, with PD cutoffs of 5%, 10%, 
+and 20% respectively.
+
 ```{python}
 # Define policy cutoffs
 policies = {
@@ -187,3 +198,14 @@ policy_summary = pd.DataFrame(policy_results).set_index("policy")
 print("\nPolicy Comparison Summary:")
 print(policy_summary)
 ```
+
+Conservative policy controls risk but limits growth, as only 8% of 
+applicants would have been accepted under this policy. The Balanced policy 
+is slightly more realistic with an acceptance rate of about 20%, while the 
+aggressive policy grants loans to over 50% of applicants. While these 
+approval rates provide a quick idea about risk tolerance for each policy, 
+these are by no means all-encompassing decision-makers about loan 
+acceptance strategy. A lender could compensate for the higher risk under  
+the aggressive policy, for example, by charging substantially higher 
+interest rates to borrowers who are deemed to be more likely to default, 
+in which case the real approval rate would be much higher than the 53% proposed by this decision engine.
