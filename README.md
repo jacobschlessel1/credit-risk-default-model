@@ -2,8 +2,8 @@
 
 End-to-end credit risk modeling project using LendingClub data.
 
-(Link to Dashboard)[
-  https://credit-risk-default-model-jacobschlessel.streamlit.app/]
+Link to Dashboard:
+  https://credit-risk-default-model-jacobschlessel.streamlit.app/
 
 **Tools**
 - Python
