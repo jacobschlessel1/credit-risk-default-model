@@ -101,9 +101,10 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
 # Load data from S3
 @st.cache_data
 def load_full_data_sample(n=5000):
-    df = read_parquet_s3(f"{S3_PREFIX}/accepted_clean.parquet")
+    df = read_parquet_s3(f"{S3_PREFIX}/dashboard_loans.parquet")
     df = df[df["issue_d"].dt.year >= 2016].copy()
     return df.sample(n=min(n, len(df)), random_state=42)
+
 
 # SHAP computation
 @st.cache_data
