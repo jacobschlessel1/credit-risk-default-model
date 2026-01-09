@@ -1,0 +1,94 @@
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+
+DATA_PATH = Path("data/processed/accepted_clean.parquet")
+OUTPUT_DIR = Path("eda_plots")
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# Load data
+
+print("Loading dataset...")
+df = pd.read_parquet(DATA_PATH, engine="pyarrow")
+
+df = df[df["issue_d"].dt.year >= 2016].copy()
+
+print(f"Rows loaded: {len(df):,}")
+
+# Loan amount histogram
+
+print("Saving loan amount histogram...")
+
+bins = np.arange(0, df["loan_amnt"].max() + 5000, 5000)
+
+plt.figure(figsize=(8, 5))
+plt.hist(df["loan_amnt"], bins=bins)
+plt.xlabel("Loan Amount ($)")
+plt.ylabel("Number of Loans")
+plt.title("Loan Amount Distribution")
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "loan_amount_distribution.png", dpi=150)
+plt.close()
+
+# Loans by year
+
+print("Saving loans by year plot...")
+
+df["issue_year"] = df["issue_d"].dt.year
+
+yearly = (
+    df
+    .groupby("issue_year")
+    .agg(
+        total_loans=("default", "count"),
+        defaults=("default", "sum")
+    )
+)
+
+yearly["non_defaults"] = yearly["total_loans"] - yearly["defaults"]
+
+plt.figure(figsize=(8, 5))
+plt.bar(yearly.index, yearly["non_defaults"], label="Non-Defaulted")
+plt.bar(
+    yearly.index,
+    yearly["defaults"],
+    bottom=yearly["non_defaults"],
+    label="Defaulted"
+)
+
+plt.xlabel("Origination Year")
+plt.ylabel("Number of Loans")
+plt.title("Loan Volume and Defaults by Year")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "loans_by_year_stacked.png", dpi=150)
+plt.close()
+
+# Loans by region
+
+print("Saving loans by region pie chart...")
+
+region_counts = df["region"].value_counts()
+
+plt.figure(figsize=(6, 6))
+plt.pie(
+    region_counts,
+    labels=region_counts.index,
+    autopct="%1.1f%%",
+    startangle=90
+)
+plt.title("Loan Distribution by Region")
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "loans_by_region.png", dpi=150)
+plt.close()
+
+print("\nEDA plots saved successfully.")
+print(f"Output directory: {OUTPUT_DIR.resolve()}")
+```
