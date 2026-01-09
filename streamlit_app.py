@@ -42,6 +42,12 @@ def load_model_artifacts():
     xgb_model = joblib.load(XGB_MODEL_PATH)
     return calibrated_model, model_features, xgb_model
 
+# Helper to load images from private S3
+@st.cache_data
+def load_image_from_s3(key: str) -> bytes:
+    fs = s3fs.S3FileSystem()
+    with fs.open(s3_path(key), "rb") as f:
+        return f.read()
 
 def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -129,28 +135,28 @@ defaulted, so predicted probabilities reflect this definition and may be higher 
     st.subheader("Most Important Features in Predicting Probability of Default")
 
     st.image(
-        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/shap_top5_streamlit.png",
+        load_image_from_s3("eda_plots/shap_top5_streamlit.png"),
         caption="Top 5 Most Important Features (SHAP)"
     )
 
     st.subheader("Loan Amount Distribution")
 
     st.image(
-        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/loan_amount_distribution.png",
+        load_image_from_s3("eda_plots/loan_amount_distribution.png"),
         caption="Loan Amount Distribution (Current Loans Only)"
     )
 
     st.subheader("Number of Loans by Origination Year")
 
     st.image(
-        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/current_loans_by_year_total.png",
+        load_image_from_s3("eda_plots/loans_by_year_total.png"),
         caption="Total Number of Current Loans by Origination Year"
     )
 
     st.subheader("Loan Distribution by Region")
 
     st.image(
-        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/loans_by_region.png",
+        load_image_from_s3("eda_plots/loans_by_region.png"),
         caption="Current Loan Distribution by Region"
     )
 
