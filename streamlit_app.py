@@ -6,50 +6,46 @@ import s3fs
 import joblib
 import shap
 from pathlib import Path
-import boto3
-from io import BytesIO
 
 # Config
 st.set_page_config(page_title="Credit Risk Dashboard", layout="wide")
 
-S3_BUCKET = "jacobschlessel-credit-risk"     
-S3_PREFIX = "dashboard"                      
+S3_BUCKET = "jacobschlessel-credit-risk"
+S3_PREFIX = "dashboard"
 
-# S3 client
-s3 = boto3.client("s3")
+ARTIFACT_DIR = Path("artifacts")
+CALIBRATED_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016_calibrated.pkl"
+MODEL_FEATURES_PATH = ARTIFACT_DIR / "model_features_post2016.pkl"
+XGB_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016.pkl"
 
-def read_parquet_s3(key: str) -> pd.DataFrame:
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-    return pd.read_parquet(BytesIO(obj["Body"].read()))
+LOCAL_FULL_DATA_PATH = Path("data/processed/accepted_clean.parquet")
 
-def read_joblib_s3(key: str):
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
-    return joblib.load(BytesIO(obj["Body"].read()))
 
-# Load dashboard tables
+# Loaders
+def s3_path(filename: str) -> str:
+    return f"s3://{S3_BUCKET}/{S3_PREFIX}/{filename}"
+
+
 @st.cache_data
 def load_dashboard_tables():
-    loans = read_parquet_s3(f"{S3_PREFIX}/dashboard_loans.parquet")
-    portfolio = read_parquet_s3(f"{S3_PREFIX}/portfolio_summary.parquet")
-    policies = read_parquet_s3(f"{S3_PREFIX}/policy_summary.parquet")
+    fs = s3fs.S3FileSystem()
+    loans = pd.read_parquet(s3_path("dashboard_loans.parquet"), filesystem=fs)
+    portfolio = pd.read_parquet(s3_path("portfolio_summary.parquet"), filesystem=fs)
+    policies = pd.read_parquet(s3_path("policy_summary.parquet"), filesystem=fs)
     return loans, portfolio, policies
 
-# Load model artifacts
+
 @st.cache_resource
 def load_model_artifacts():
-    calibrated_model = read_joblib_s3(f"{S3_PREFIX}/xgb_post2016_calibrated.pkl")
-    model_features = read_joblib_s3(f"{S3_PREFIX}/model_features_post2016.pkl")
-    xgb_model = read_joblib_s3(f"{S3_PREFIX}/xgb_post2016.pkl")
+    calibrated_model = joblib.load(CALIBRATED_MODEL_PATH)
+    model_features = joblib.load(MODEL_FEATURES_PATH)
+    xgb_model = joblib.load(XGB_MODEL_PATH)
     return calibrated_model, model_features, xgb_model
 
-# Feature engineering
+
 def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    def zero_series():
-        return pd.Series(0, index=df.index)
-
-    # joint variables
     joint_numeric_pred = [
         "sec_app_mths_since_last_major_derog",
         "sec_app_revol_util",
@@ -67,14 +63,10 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
         "annual_inc_joint",
     ]
 
-    joint_flag = df["joint_flag"] if "joint_flag" in df.columns else zero_series()
-
     for var in joint_numeric_pred:
-        base = df[var].fillna(0) if var in df.columns else zero_series()
-        df[var] = base
-        df[f"{var}_active"] = joint_flag * base
+        df[var] = df.get(var, 0).fillna(0)
+        df[f"{var}_active"] = df.get("joint_flag", 0) * df[var]
 
-    # Flag variables
     flag_to_var = {
         "mths_since_last_record_flag": "mths_since_last_record",
         "mths_since_recent_bc_dlq_flag": "mths_since_recent_bc_dlq",
@@ -84,17 +76,9 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     for flag, var in flag_to_var.items():
-        base = (
-            df[var].replace(999, 0).fillna(0)
-            if var in df.columns
-            else zero_series()
-        )
-        flag_series = df[flag] if flag in df.columns else zero_series()
+        df[var] = df.get(var, 0).replace(999, 0).fillna(0)
+        df[f"{var}_active"] = df.get(flag, 0) * df[var]
 
-        df[var] = base
-        df[f"{var}_active"] = flag_series * base
-
-    # Recent credit variables
     recent_credit_vars_2016 = [
         "il_util", "mths_since_rcnt_il", "all_util",
         "open_acc_6m", "inq_last_12m", "total_cu_tl",
@@ -104,47 +88,41 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     for col in recent_credit_vars_2016:
-        df[col] = df[col].fillna(0) if col in df.columns else zero_series()
+        df[col] = df.get(col, 0).fillna(0)
 
-    # Encoding
-    categorical_cols = ["term", "region", "home_ownership"]
-    existing_cats = [c for c in categorical_cols if c in df.columns]
-
-    if existing_cats:
-        df = pd.get_dummies(
-            df,
-            columns=existing_cats,
-            drop_first=True
-        )
+    df = pd.get_dummies(
+        df,
+        columns=["term", "region", "home_ownership"],
+        drop_first=True
+    )
 
     return df
 
-# Load data from S3
+
 @st.cache_data
 def load_full_data_sample(n=5000):
-    df = read_parquet_s3(f"{S3_PREFIX}/dashboard_loans.parquet")
+    df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
     df = df[df["issue_d"].dt.year >= 2016].copy()
     return df.sample(n=min(n, len(df)), random_state=42)
 
 
-# SHAP computation
 @st.cache_data
 def compute_top_shap_features(_xgb_model, model_features, df_sample):
     X_full = build_model_features(df_sample)
     X = X_full.reindex(columns=model_features, fill_value=0)
-
     explainer = shap.TreeExplainer(_xgb_model)
     shap_vals = explainer.shap_values(X)
-
     return (
         pd.Series(np.abs(shap_vals).mean(axis=0), index=X.columns)
         .sort_values(ascending=False)
         .head(5)
     )
 
-# Load
+
+# Load data
 loans, portfolio, policies = load_dashboard_tables()
 calibrated_model, model_features, xgb_model = load_model_artifacts()
+
 
 # Tabs
 tab_eda, tab_sim, tab_decision = st.tabs([
@@ -287,4 +265,3 @@ with tab_decision:
 
     st.subheader("Policy Comparison")
     st.dataframe(policies)
-
