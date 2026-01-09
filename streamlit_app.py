@@ -99,26 +99,6 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@st.cache_data
-def load_full_data_sample(n=5000):
-    df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
-    df = df[df["issue_d"].dt.year >= 2016].copy()
-    return df.sample(n=min(n, len(df)), random_state=42)
-
-
-@st.cache_data
-def compute_top_shap_features(_xgb_model, model_features, df_sample):
-    X_full = build_model_features(df_sample)
-    X = X_full.reindex(columns=model_features, fill_value=0)
-    explainer = shap.TreeExplainer(_xgb_model)
-    shap_vals = explainer.shap_values(X)
-    return (
-        pd.Series(np.abs(shap_vals).mean(axis=0), index=X.columns)
-        .sort_values(ascending=False)
-        .head(5)
-    )
-
-
 # Load data
 loans, portfolio, policies = load_dashboard_tables()
 calibrated_model, model_features, xgb_model = load_model_artifacts()
@@ -146,66 +126,52 @@ defaulted, so predicted probabilities reflect this definition and may be higher 
         """
     )
 
-    # SHAP
     st.subheader("Most Important Features in Predicting Probability of Default")
-    df_sample = load_full_data_sample()
-    top5 = compute_top_shap_features(xgb_model, model_features, df_sample)
 
-    fig, ax = plt.subplots()
-    ax.barh(top5.index[::-1], top5.values[::-1])
-    ax.set_xlabel("Relative Importance")
-    ax.set_title("Top 5 Most Important Features")
-    st.pyplot(fig)
-
-    # Loan amount distribution
-    st.subheader("Loan Amount Distribution")
-    bins = np.arange(0, loans["loan_amnt"].max() + 5000, 5000)
-
-    fig, ax = plt.subplots()
-    ax.hist(loans["loan_amnt"], bins=bins)
-    ax.set_xlabel("Loan Amount ($)")
-    ax.set_ylabel("Number of Loans")
-    st.pyplot(fig)
-
-    # Number of loans by year
-    loans_by_year = (
-        df_sample
-        .assign(issue_year=df_sample["issue_d"].dt.year)
-        .groupby("issue_year")
-        .size()
+    st.image(
+        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/shap_top5_streamlit.png",
+        caption="Top 5 Most Important Features (SHAP)"
     )
 
-    fig, ax = plt.subplots()
-    ax.bar(loans_by_year.index, loans_by_year.values)
-    ax.set_xticks(loans_by_year.index)
-    ax.set_xticklabels(loans_by_year.index, rotation=45)
-    ax.set_xlabel("Origination Year")
-    ax.set_ylabel("Number of Loans")
-    ax.set_title("Number of Loans by Origination Year")
-    st.pyplot(fig)
+    st.subheader("Loan Amount Distribution")
 
-    # Pie chart: region
+    st.image(
+        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/loan_amount_distribution.png",
+        caption="Loan Amount Distribution (Current Loans Only)"
+    )
+
+    st.subheader("Number of Loans by Origination Year")
+
+    st.image(
+        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/current_loans_by_year_total.png",
+        caption="Total Number of Current Loans by Origination Year"
+    )
+
     st.subheader("Loan Distribution by Region")
 
-    region_counts = df_sample["region"].value_counts()
-
-    fig, ax = plt.subplots()
-    ax.pie(region_counts, labels=region_counts.index, autopct="%1.1f%%")
-    ax.set_title("Loans by Region")
-    st.pyplot(fig)
+    st.image(
+        f"https://{S3_BUCKET}.s3.amazonaws.com/{S3_PREFIX}/eda_plots/loans_by_region.png",
+        caption="Current Loan Distribution by Region"
+    )
 
 
 # Simulator
 with tab_sim:
     st.header("🔧 Interactive Simulator")
     st.markdown(
-        "Adjust the important borrower characteristics to see how the " \
-        "chance of default " \
-        "changes. Note: all other features are held constant at a " \
+        "Adjust the important borrower characteristics to see how the "
+        "chance of default "
+        "changes. Note: all other features are held constant at a "
         "representative borrower's values."
     )
 
-    base_loan = load_full_data_sample(n=1)
+    @st.cache_data
+    def load_simulator_baseline():
+        df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
+        df = df[df["issue_d"].dt.year >= 2016].copy()
+        return df.sample(1, random_state=42)
+
+    base_loan = load_simulator_baseline()
 
     loan_amnt = st.slider("Loan Amount ($)", 1000, 50000, int(base_loan["loan_amnt"].iloc[0]), 500)
     fico = st.slider("FICO Score", 550, 850, int(base_loan["fico_range_low"].iloc[0]), 5)
@@ -241,7 +207,6 @@ with tab_decision:
         "defaulting."
     )
 
-
     c1, c2, c3 = st.columns(3)
     c1.metric("Loans", f"{len(loans):,}")
     c2.metric("Avg PD", f"{loans['calibrated_pd'].mean():.2%}")
@@ -256,7 +221,6 @@ with tab_decision:
     pd_hist.index = pd_hist.index.astype(str)
     st.bar_chart(pd_hist)
 
-    
     st.subheader("Risk Bucket Composition")
     st.bar_chart(loans["risk_bucket"].value_counts().sort_index())
 
