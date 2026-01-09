@@ -7,45 +7,42 @@ import joblib
 import shap
 from pathlib import Path
 import boto3
-
-s3 = boto3.client("s3")  
+from io import BytesIO
 
 # Config
 st.set_page_config(page_title="Credit Risk Dashboard", layout="wide")
 
-S3_BUCKET = "jacobschlessel-credit-risk"
-S3_PREFIX = "dashboard"
+S3_BUCKET = "jacobschlessel-credit-risk"     
+S3_PREFIX = "dashboard"                      
 
-ARTIFACT_DIR = Path("artifacts")
-CALIBRATED_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016_calibrated.pkl"
-MODEL_FEATURES_PATH = ARTIFACT_DIR / "model_features_post2016.pkl"
-XGB_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016.pkl"
+# S3 client
+s3 = boto3.client("s3")
 
-LOCAL_FULL_DATA_PATH = Path("data/processed/accepted_clean.parquet")
+def read_parquet_s3(key: str) -> pd.DataFrame:
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+    return pd.read_parquet(BytesIO(obj["Body"].read()))
 
+def read_joblib_s3(key: str):
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=key)
+    return joblib.load(BytesIO(obj["Body"].read()))
 
-# Loaders
-def s3_path(filename: str) -> str:
-    return f"s3://{S3_BUCKET}/{S3_PREFIX}/{filename}"
-
-
+# Load dashboard tables
 @st.cache_data
 def load_dashboard_tables():
-    fs = s3fs.S3FileSystem()
-    loans = pd.read_parquet(s3_path("dashboard_loans.parquet"), filesystem=fs)
-    portfolio = pd.read_parquet(s3_path("portfolio_summary.parquet"), filesystem=fs)
-    policies = pd.read_parquet(s3_path("policy_summary.parquet"), filesystem=fs)
+    loans = read_parquet_s3(f"{S3_PREFIX}/dashboard_loans.parquet")
+    portfolio = read_parquet_s3(f"{S3_PREFIX}/portfolio_summary.parquet")
+    policies = read_parquet_s3(f"{S3_PREFIX}/policy_summary.parquet")
     return loans, portfolio, policies
 
-
+# Load model artifacts
 @st.cache_resource
 def load_model_artifacts():
-    calibrated_model = joblib.load(CALIBRATED_MODEL_PATH)
-    model_features = joblib.load(MODEL_FEATURES_PATH)
-    xgb_model = joblib.load(XGB_MODEL_PATH)
+    calibrated_model = read_joblib_s3(f"{S3_PREFIX}/xgb_post2016_calibrated.pkl")
+    model_features = read_joblib_s3(f"{S3_PREFIX}/model_features_post2016.pkl")
+    xgb_model = read_joblib_s3(f"{S3_PREFIX}/xgb_post2016.pkl")
     return calibrated_model, model_features, xgb_model
 
-
+# Feature engineering
 def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -101,31 +98,31 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-
+# Load data from S3
 @st.cache_data
 def load_full_data_sample(n=5000):
-    df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
+    df = read_parquet_s3(f"{S3_PREFIX}/accepted_clean.parquet")
     df = df[df["issue_d"].dt.year >= 2016].copy()
     return df.sample(n=min(n, len(df)), random_state=42)
 
-
+# SHAP computation
 @st.cache_data
 def compute_top_shap_features(_xgb_model, model_features, df_sample):
     X_full = build_model_features(df_sample)
     X = X_full.reindex(columns=model_features, fill_value=0)
+
     explainer = shap.TreeExplainer(_xgb_model)
     shap_vals = explainer.shap_values(X)
+
     return (
         pd.Series(np.abs(shap_vals).mean(axis=0), index=X.columns)
         .sort_values(ascending=False)
         .head(5)
     )
 
-
-# Load data
+# Load
 loans, portfolio, policies = load_dashboard_tables()
 calibrated_model, model_features, xgb_model = load_model_artifacts()
-
 
 # Tabs
 tab_eda, tab_sim, tab_decision = st.tabs([
