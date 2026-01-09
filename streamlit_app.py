@@ -247,6 +247,16 @@ with tab_decision:
     c2.metric("Avg PD", f"{loans['calibrated_pd'].mean():.2%}")
     c3.metric("Exposure", f"${loans['loan_amnt'].sum():,.0f}")
 
+    st.subheader("Distribution of Probability of Default (PD)")
+    pd_hist = (
+        pd.cut(loans["calibrated_pd"], bins=10)
+        .value_counts()
+        .sort_index()
+    )
+    pd_hist.index = pd_hist.index.astype(str)
+    st.bar_chart(pd_hist)
+
+    
     st.subheader("Risk Bucket Composition")
     st.bar_chart(loans["risk_bucket"].value_counts().sort_index())
 
