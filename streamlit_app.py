@@ -46,6 +46,10 @@ def load_model_artifacts():
 def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    def zero_series():
+        return pd.Series(0, index=df.index)
+
+    # joint variables
     joint_numeric_pred = [
         "sec_app_mths_since_last_major_derog",
         "sec_app_revol_util",
@@ -63,10 +67,14 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
         "annual_inc_joint",
     ]
 
-    for var in joint_numeric_pred:
-        df[var] = df.get(var, 0).fillna(0)
-        df[f"{var}_active"] = df.get("joint_flag", 0) * df[var]
+    joint_flag = df["joint_flag"] if "joint_flag" in df.columns else zero_series()
 
+    for var in joint_numeric_pred:
+        base = df[var].fillna(0) if var in df.columns else zero_series()
+        df[var] = base
+        df[f"{var}_active"] = joint_flag * base
+
+    # Flag variables
     flag_to_var = {
         "mths_since_last_record_flag": "mths_since_last_record",
         "mths_since_recent_bc_dlq_flag": "mths_since_recent_bc_dlq",
@@ -76,9 +84,17 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     for flag, var in flag_to_var.items():
-        df[var] = df.get(var, 0).replace(999, 0).fillna(0)
-        df[f"{var}_active"] = df.get(flag, 0) * df[var]
+        base = (
+            df[var].replace(999, 0).fillna(0)
+            if var in df.columns
+            else zero_series()
+        )
+        flag_series = df[flag] if flag in df.columns else zero_series()
 
+        df[var] = base
+        df[f"{var}_active"] = flag_series * base
+
+    # Recent credit variables
     recent_credit_vars_2016 = [
         "il_util", "mths_since_rcnt_il", "all_util",
         "open_acc_6m", "inq_last_12m", "total_cu_tl",
@@ -88,13 +104,18 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     ]
 
     for col in recent_credit_vars_2016:
-        df[col] = df.get(col, 0).fillna(0)
+        df[col] = df[col].fillna(0) if col in df.columns else zero_series()
 
-    df = pd.get_dummies(
-        df,
-        columns=["term", "region", "home_ownership"],
-        drop_first=True
-    )
+    # Encoding
+    categorical_cols = ["term", "region", "home_ownership"]
+    existing_cats = [c for c in categorical_cols if c in df.columns]
+
+    if existing_cats:
+        df = pd.get_dummies(
+            df,
+            columns=existing_cats,
+            drop_first=True
+        )
 
     return df
 
