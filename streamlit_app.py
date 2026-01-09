@@ -6,6 +6,9 @@ import s3fs
 import joblib
 import shap
 from pathlib import Path
+import boto3
+
+s3 = boto3.client("s3")  
 
 # Config
 st.set_page_config(page_title="Credit Risk Dashboard", layout="wide")
