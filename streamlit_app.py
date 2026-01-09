@@ -1,75 +1,47 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import s3fs
 import joblib
+import shap
+from pathlib import Path
 
-# Page config
-st.set_page_config(
-    page_title="Credit Risk Dashboard",
-    layout="wide"
-)
+# Config
+st.set_page_config(page_title="Credit Risk Dashboard", layout="wide")
 
-st.title("📊 Credit Risk Portfolio Dashboard")
+S3_BUCKET = "jacobschlessel-credit-risk"
+S3_PREFIX = "dashboard"
 
-st.markdown(
-    """
-    Forward-looking credit risk monitoring and scenario analysis for post-2016 loans.
-    Model outputs are stored in AWS S3 and served through an interactive decision engine.
-    """
-)
-#Load full dataset
+ARTIFACT_DIR = Path("artifacts")
+CALIBRATED_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016_calibrated.pkl"
+MODEL_FEATURES_PATH = ARTIFACT_DIR / "model_features_post2016.pkl"
+XGB_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016.pkl"
+
+LOCAL_FULL_DATA_PATH = Path("data/processed/accepted_clean.parquet")
+
+
+# Loaders
+def s3_path(filename: str) -> str:
+    return f"s3://{S3_BUCKET}/{S3_PREFIX}/{filename}"
+
+
 @st.cache_data
-def load_base_loan():
-    df_full = pd.read_parquet(
-        "data/processed/accepted_clean.parquet",
-        engine="pyarrow"
-    )
-
-    df_full = df_full.loc[
-        (df_full["issue_d"].dt.year >= 2016) &
-        (df_full["current_flag"] == 0)
-    ].copy()
-
-    return df_full.sample(1, random_state=42)
-
-base_loan = load_base_loan()
-
-# Load data from S3
-@st.cache_data
-def load_dashboard_data():
+def load_dashboard_tables():
     fs = s3fs.S3FileSystem()
-
-    loans = pd.read_parquet(
-        "s3://jacobschlessel-credit-risk/dashboard/dashboard_loans.parquet",
-        filesystem=fs
-    )
-
-    portfolio = pd.read_parquet(
-        "s3://jacobschlessel-credit-risk/dashboard/portfolio_summary.parquet",
-        filesystem=fs
-    )
-
-    policies = pd.read_parquet(
-        "s3://jacobschlessel-credit-risk/dashboard/policy_summary.parquet",
-        filesystem=fs
-    )
-
+    loans = pd.read_parquet(s3_path("dashboard_loans.parquet"), filesystem=fs)
+    portfolio = pd.read_parquet(s3_path("portfolio_summary.parquet"), filesystem=fs)
+    policies = pd.read_parquet(s3_path("policy_summary.parquet"), filesystem=fs)
     return loans, portfolio, policies
 
-loans, portfolio, policies = load_dashboard_data()
 
-
-# Load model artifacts
 @st.cache_resource
-def load_model():
-    calibrated_model = joblib.load("artifacts/xgb_post2016_calibrated.pkl")
-    model_features = joblib.load("artifacts/model_features_post2016.pkl")
-    return calibrated_model, model_features
+def load_model_artifacts():
+    calibrated_model = joblib.load(CALIBRATED_MODEL_PATH)
+    model_features = joblib.load(MODEL_FEATURES_PATH)
+    xgb_model = joblib.load(XGB_MODEL_PATH)
+    return calibrated_model, model_features, xgb_model
 
-calibrated_model, model_features = load_model()
-
-# Feature engineering function
 
 def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -88,12 +60,12 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
         "sec_app_chargeoff_within_12_mths",
         "sec_app_collections_12_mths_ex_med",
         "dti_joint",
-        "annual_inc_joint"
+        "annual_inc_joint",
     ]
 
     for var in joint_numeric_pred:
-        df[var] = df[var].fillna(0)
-        df[f"{var}_active"] = df["joint_flag"] * df[var]
+        df[var] = df.get(var, 0).fillna(0)
+        df[f"{var}_active"] = df.get("joint_flag", 0) * df[var]
 
     flag_to_var = {
         "mths_since_last_record_flag": "mths_since_last_record",
@@ -104,19 +76,19 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
     }
 
     for flag, var in flag_to_var.items():
-        df[var] = df[var].replace(999, 0).fillna(0)
-        df[f"{var}_active"] = df[flag] * df[var]
+        df[var] = df.get(var, 0).replace(999, 0).fillna(0)
+        df[f"{var}_active"] = df.get(flag, 0) * df[var]
 
     recent_credit_vars_2016 = [
         "il_util", "mths_since_rcnt_il", "all_util",
         "open_acc_6m", "inq_last_12m", "total_cu_tl",
         "open_il_24m", "open_il_12m", "open_act_il",
         "max_bal_bc", "inq_fi", "total_bal_il",
-        "open_rv_24m", "open_rv_12m"
+        "open_rv_24m", "open_rv_12m",
     ]
 
     for col in recent_credit_vars_2016:
-        df[col] = df[col].fillna(0)
+        df[col] = df.get(col, 0).fillna(0)
 
     df = pd.get_dummies(
         df,
@@ -126,103 +98,161 @@ def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-# Sidebar filters
-st.sidebar.header("📅 Portfolio Filters")
 
-year_min, year_max = int(loans["issue_year"].min()), int(loans["issue_year"].max())
-year_range = st.sidebar.slider(
-    "Origination Year",
-    year_min,
-    year_max,
-    (year_min, year_max)
-)
-
-filtered = loans[
-    loans["issue_year"].between(year_range[0], year_range[1])
-]
-
-# KPIs
-c1, c2, c3 = st.columns(3)
-c1.metric("Loans", f"{len(filtered):,}")
-c2.metric("Average PD", f"{filtered['calibrated_pd'].mean():.2%}")
-c3.metric("Exposure", f"${filtered['loan_amnt'].sum():,.0f}")
-
-# PD distribution
-st.subheader("Distribution of Calibrated PDs")
-
-fig, ax = plt.subplots()
-ax.hist(filtered["calibrated_pd"], bins=50)
-ax.set_xlabel("Calibrated PD")
-ax.set_ylabel("Loan Count")
-st.pyplot(fig)
-
-# Risk Buckets
-st.subheader("Risk Bucket Composition")
-st.bar_chart(filtered["risk_bucket"].value_counts().sort_index())
-
-# Policy table
-st.subheader("Decision Engine – Policy Comparison")
-st.dataframe(policies)
-
-# What-IF Simulator
-st.markdown("---")
-st.header("🔧 What-If Probability of Default Simulator")
+@st.cache_data
+def load_full_data_sample(n=5000):
+    df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
+    df = df[df["issue_d"].dt.year >= 2016].copy()
+    return df.sample(n=min(n, len(df)), random_state=42)
 
 
-st.sidebar.header("What-If Inputs")
+@st.cache_data
+def compute_top_shap_features(_xgb_model, model_features, df_sample):
+    X_full = build_model_features(df_sample)
+    X = X_full.reindex(columns=model_features, fill_value=0)
+    explainer = shap.TreeExplainer(_xgb_model)
+    shap_vals = explainer.shap_values(X)
+    return (
+        pd.Series(np.abs(shap_vals).mean(axis=0), index=X.columns)
+        .sort_values(ascending=False)
+        .head(5)
+    )
 
-loan_amnt = st.sidebar.slider(
-    "Loan Amount ($)",
-    1000, 50000,
-    int(base_loan["loan_amnt"].iloc[0]),
-    step=500
-)
 
-fico = st.sidebar.slider(
-    "FICO Score",
-    550, 850,
-    int(base_loan["fico_range_low"].iloc[0]),
-    step=5
-)
+# Load data
+loans, portfolio, policies = load_dashboard_tables()
+calibrated_model, model_features, xgb_model = load_model_artifacts()
 
-dti = st.sidebar.slider(
-    "Debt-to-Income Ratio",
-    0.0, 50.0,
-    float(base_loan["dti"].iloc[0]),
-    step=0.5
-)
 
-term = st.sidebar.selectbox(
-    "Loan Term",
-    [" 36 months", " 60 months"]
-)
+# Tabs
+tab_eda, tab_sim, tab_decision = st.tabs([
+    "1) Project Summary",
+    "2) Interactive Simulator",
+    "3) Decision Engine Dashboard"
+])
 
-sim_loan = base_loan.copy()
-sim_loan["loan_amnt"] = loan_amnt
-sim_loan["fico_range_low"] = fico
-sim_loan["fico_range_high"] = fico + 4
-sim_loan["dti"] = dti
-sim_loan["term"] = term
+# Tab 1: Summary and EDA
+with tab_eda:
+    st.header("Project Summary")
 
-X_sim = build_model_features(sim_loan)
-X_sim = X_sim.reindex(columns=model_features, fill_value=0)
+    st.markdown(
+        """
+This project builds and deploys a **calibrated Probability of Default (PD) 
+model**
+to evaluate credit risk for consumer loans from 2016-2018. Data is sourced 
+from LendingClub, a peer-to-peer lending platform. Important note: for this 
+project, **default** is defined as a loan that is either charged off or 
+defaulted, so predicted probabilities reflect this definition and may be higher than one would expect for loans that strictly defaulted only.
+        """
+    )
 
-pd_sim = calibrated_model.predict_proba(X_sim)[:, 1][0]
+    # SHAP
+    st.subheader("Most Important Features in Predicting Probability of Default")
+    df_sample = load_full_data_sample()
+    top5 = compute_top_shap_features(xgb_model, model_features, df_sample)
 
-# Compute baseline PD from the unmodified base loan
-X_base = build_model_features(base_loan)
-X_base = X_base.reindex(columns=model_features, fill_value=0)
+    fig, ax = plt.subplots()
+    ax.barh(top5.index[::-1], top5.values[::-1])
+    ax.set_xlabel("Relative Importance")
+    ax.set_title("Top 5 Most Important Features")
+    st.pyplot(fig)
 
-pd_orig = calibrated_model.predict_proba(X_base)[:, 1][0]
+    # Loan amount distribution
+    st.subheader("Loan Amount Distribution")
+    bins = np.arange(0, loans["loan_amnt"].max() + 5000, 5000)
 
-delta = pd_sim - pd_orig
+    fig, ax = plt.subplots()
+    ax.hist(loans["loan_amnt"], bins=bins)
+    ax.set_xlabel("Loan Amount ($)")
+    ax.set_ylabel("Number of Loans")
+    st.pyplot(fig)
 
-st.metric(
-    label="Simulated Probability of Default",
-    value=f"{pd_sim:.2%}",
-    delta=f"{delta:.2%}"
-)
+    # Number of loans by year
+    loans_by_year = (
+        df_sample
+        .assign(issue_year=df_sample["issue_d"].dt.year)
+        .groupby("issue_year")
+        .size()
+    )
 
-st.caption(
-    "Simulated PDs are model-based sensitivity estimates and do not imply causal guarantees."
-)
+    fig, ax = plt.subplots()
+    ax.bar(loans_by_year.index, loans_by_year.values)
+    ax.set_xticks(loans_by_year.index)
+    ax.set_xticklabels(loans_by_year.index, rotation=45)
+    ax.set_xlabel("Origination Year")
+    ax.set_ylabel("Number of Loans")
+    ax.set_title("Number of Loans by Origination Year")
+    st.pyplot(fig)
+
+    # Pie chart: region
+    st.subheader("Loan Distribution by Region")
+
+    region_counts = df_sample["region"].value_counts()
+
+    fig, ax = plt.subplots()
+    ax.pie(region_counts, labels=region_counts.index, autopct="%1.1f%%")
+    ax.set_title("Loans by Region")
+    st.pyplot(fig)
+
+
+# Simulator
+with tab_sim:
+    st.header("🔧 Interactive Simulator")
+    st.markdown(
+        "Adjust the important borrower characteristics to see how the " \
+        "chance of default " \
+        "changes. Note: all other features are held constant at a " \
+        "representative borrower's values."
+    )
+
+    base_loan = load_full_data_sample(n=1)
+
+    loan_amnt = st.slider("Loan Amount ($)", 1000, 50000, int(base_loan["loan_amnt"].iloc[0]), 500)
+    fico = st.slider("FICO Score", 550, 850, int(base_loan["fico_range_low"].iloc[0]), 5)
+    dti = st.slider("Debt-to-Income Ratio", 0.0, 50.0, float(base_loan["dti"].iloc[0]), 0.5)
+
+    sim_loan = base_loan.copy()
+    sim_loan["loan_amnt"] = loan_amnt
+    sim_loan["fico_range_low"] = fico
+    sim_loan["fico_range_high"] = fico + 4
+    sim_loan["dti"] = dti
+
+    X_base = build_model_features(base_loan).reindex(columns=model_features, fill_value=0)
+    X_sim = build_model_features(sim_loan).reindex(columns=model_features, fill_value=0)
+
+    pd_base = calibrated_model.predict_proba(X_base)[:, 1][0]
+    pd_sim = calibrated_model.predict_proba(X_sim)[:, 1][0]
+
+    st.metric("Reference PD", f"{pd_base:.2%}")
+    st.metric("Simulated PD", f"{pd_sim:.2%}", delta=f"{pd_sim - pd_base:.2%}")
+
+
+# Decision engine dashboard
+with tab_decision:
+    st.header("Decision Engine Dashboard")
+
+    st.markdown(
+        "In creating policies for loan approvals, it's important to "
+        "understand the overall risk profile of the portfolio. This "
+        "dashboard shows important implications of different risk "
+        "tolerances in deciding to accept or reject loans based on their "
+        "odds of defaulting. Here, **risk buckets** are used to show the "
+        "proportion of loans that fall into specific ranges of chances of "
+        "defaulting."
+    )
+
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Loans", f"{len(loans):,}")
+    c2.metric("Avg PD", f"{loans['calibrated_pd'].mean():.2%}")
+    c3.metric("Exposure", f"${loans['loan_amnt'].sum():,.0f}")
+
+    st.subheader("Risk Bucket Composition")
+    st.bar_chart(loans["risk_bucket"].value_counts().sort_index())
+
+    st.subheader("Portfolio Summary")
+    st.dataframe(portfolio)
+
+    st.subheader("Policy Comparison")
+    st.dataframe(policies)
+
