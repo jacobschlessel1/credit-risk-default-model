@@ -170,12 +170,16 @@ with tab_sim:
         "changes. Note: all other features are held constant at a "
         "representative borrower's values."
     )
-
+    
+    # Load simulator from S3
     @st.cache_data
     def load_simulator_baseline():
-        df = pd.read_parquet(LOCAL_FULL_DATA_PATH, engine="pyarrow")
-        df = df[df["issue_d"].dt.year >= 2016].copy()
-        return df.sample(1, random_state=42)
+        fs = s3fs.S3FileSystem()
+        return pd.read_parquet(
+            s3_path("simulator_baseline.parquet"),
+            filesystem=fs
+        )
+
 
     base_loan = load_simulator_baseline()
 
