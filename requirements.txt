@@ -8,7 +8,6 @@ asttokens==3.0.1
 attrs==25.4.0
 blinker==1.9.0
 botocore==1.41.5
-boto3
 cachetools==6.2.4
 certifi==2026.1.4
 charset-normalizer==3.4.4
@@ -21,6 +20,7 @@ cycler==0.12.1
 debugpy==1.8.19
 decorator==5.2.1
 executing==2.2.1
+fastjsonschema==2.21.2
 filelock==3.20.1
 fonttools==4.61.1
 frozenlist==1.8.0
@@ -47,6 +47,8 @@ matplotlib-inline==0.2.1
 mpmath==1.3.0
 multidict==6.7.0
 narwhals==2.14.0
+nbclient==0.10.4
+nbformat==5.10.4
 nest-asyncio==1.6.0
 networkx==3.6.1
 numba==0.63.1
@@ -68,6 +70,7 @@ Pygments==2.19.2
 pyparsing==3.3.1
 python-dateutil==2.9.0.post0
 pytz==2025.2
+PyYAML==6.0.3
 pyzmq==27.1.0
 referencing==0.37.0
 requests==2.32.5
