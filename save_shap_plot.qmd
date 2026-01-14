@@ -1,0 +1,116 @@
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import joblib
+import shap
+from pathlib import Path
+
+
+DATA_PATH = Path("data/processed/accepted_clean.parquet")
+ARTIFACT_DIR = Path("artifacts")
+
+XGB_MODEL_PATH = ARTIFACT_DIR / "xgb_post2016.pkl"
+MODEL_FEATURES_PATH = ARTIFACT_DIR / "model_features_post2016.pkl"
+
+OUTPUT_DIR = Path("eda_plots")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Load artifacts
+xgb_model = joblib.load(XGB_MODEL_PATH)
+model_features = joblib.load(MODEL_FEATURES_PATH)
+
+# Function for feature engineering
+def build_model_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    joint_numeric_pred = [
+        "sec_app_mths_since_last_major_derog",
+        "sec_app_revol_util",
+        "revol_bal_joint",
+        "sec_app_open_acc",
+        "sec_app_num_rev_accts",
+        "sec_app_inq_last_6mths",
+        "sec_app_mort_acc",
+        "sec_app_open_act_il",
+        "sec_app_fico_range_low",
+        "sec_app_fico_range_high",
+        "sec_app_chargeoff_within_12_mths",
+        "sec_app_collections_12_mths_ex_med",
+        "dti_joint",
+        "annual_inc_joint",
+    ]
+
+    for var in joint_numeric_pred:
+        df[var] = df.get(var, 0).fillna(0)
+        df[f"{var}_active"] = df.get("joint_flag", 0) * df[var]
+
+    flag_to_var = {
+        "mths_since_last_record_flag": "mths_since_last_record",
+        "mths_since_recent_bc_dlq_flag": "mths_since_recent_bc_dlq",
+        "mths_since_last_major_derog_flag": "mths_since_last_major_derog",
+        "mths_since_recent_revol_delinq_flag": "mths_since_recent_revol_delinq",
+        "mths_since_last_delinq_flag": "mths_since_last_delinq",
+    }
+
+    for flag, var in flag_to_var.items():
+        df[var] = df.get(var, 0).replace(999, 0).fillna(0)
+        df[f"{var}_active"] = df.get(flag, 0) * df[var]
+
+    recent_credit_vars_2016 = [
+        "il_util", "mths_since_rcnt_il", "all_util",
+        "open_acc_6m", "inq_last_12m", "total_cu_tl",
+        "open_il_24m", "open_il_12m", "open_act_il",
+        "max_bal_bc", "inq_fi", "total_bal_il",
+        "open_rv_24m", "open_rv_12m",
+    ]
+
+    for col in recent_credit_vars_2016:
+        df[col] = df.get(col, 0).fillna(0)
+
+    df = pd.get_dummies(
+        df,
+        columns=["term", "region", "home_ownership"],
+        drop_first=True
+    )
+
+    return df
+
+
+def compute_top_shap_features(xgb_model, model_features, df_sample):
+    X_full = build_model_features(df_sample)
+    X = X_full.reindex(columns=model_features, fill_value=0)
+
+    explainer = shap.TreeExplainer(xgb_model)
+    shap_vals = explainer.shap_values(X)
+
+    return (
+        pd.Series(np.abs(shap_vals).mean(axis=0), index=X.columns)
+        .sort_values(ascending=False)
+        .head(5)
+    )
+
+
+
+df = pd.read_parquet(DATA_PATH, engine="pyarrow")
+df = df[df["issue_d"].dt.year >= 2016].copy()
+df_sample = df.sample(5000, random_state=42)
+
+# Geneate plot
+top5 = compute_top_shap_features(
+    xgb_model,
+    model_features,
+    df_sample
+)
+
+fig, ax = plt.subplots(figsize=(6, 4))
+ax.barh(top5.index[::-1], top5.values[::-1])
+ax.set_xlabel("Relative Importance")
+ax.set_title("Top 5 Most Important Features")
+
+plt.tight_layout()
+plt.savefig(OUTPUT_DIR / "shap_top5_streamlit.png", dpi=150)
+plt.close()
+
+print("SHAP plot saved to eda_plots/shap_top5_streamlit.png")
+```
