@@ -4,3 +4,25 @@ project:
 
 execute:
   freeze: auto
+  echo: true
+  warning: false
+  message: false
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: true
+    code-summary: "Show code"
+    code-overflow: wrap
+    fig-align: center
+    fig-width: 8
+    fig-height: 5
+    df-print: paged
+    smooth-scroll: true
+    link-external-newwindow: true
+    fontsize: 1.05em
