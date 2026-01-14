@@ -685,7 +685,7 @@ plt.show()
 print("Calibrated Probability of Default — Post-2016 Non-Current Loans\n")
 
 print(
-    pd_calibrated_series.describe(
+    pd_calibrated.describe(
         percentiles=[0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
     )
 )
@@ -693,7 +693,7 @@ print(
 observed_default_rate = df_post2016["default"].mean()
 
 print("\nObserved Default Rate:", round(observed_default_rate, 4))
-print("Average Calibrated PD:", round(pd_calibrated_series.mean(), 4))
+print("Average Calibrated PD:", round(pd_calibrated.mean(), 4))
 
 risk_buckets = pd.cut(pd_calibrated, bins=bins, labels=labels)
 
