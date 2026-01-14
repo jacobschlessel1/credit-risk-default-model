@@ -48,10 +48,18 @@ This project follows the entire lifecycle of a data science project, with
 each step documented in a qmd file in the repository. In these files, I have 
 included all code and visualizations used in analyzing data and building 
 models, as well as creating an interactive dashboard in Streamlit to 
-present results. All steps, from data cleaning to feature engineering to model
-building and evaluation, are annotated and explained in detail, and I have 
-included justifications for all important decisions made along the way. If you
-would like to follow along with my work, please
+present results. All steps, from data cleaning to feature engineering to 
+model building and evaluation, are annotated and explained in detail, and I 
+have included justifications for all important decisions made along the way. 
+If you would like to follow along with my work, please see the releases tab 
+(to the right of the screen), where I have published the qmd files as htmls 
+for easy viewing. The order goes as follows:
+
+1. Data Inspection 
+2. Exploratory Data Analysis 
+3. PD Modeling
+4. LGD Modeling
+5. Decision Engine Creation
 
 
 # Variable Definitions
