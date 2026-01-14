@@ -1,29 +1,58 @@
-# Credit Risk & Loan Default Modeling
+# Credit Risk Modeling
 
-End-to-end credit risk modeling project using LendingClub data.
+This project analyzes consumer loan data and builds machine learning that 
+predict whether or not a loan defaults based on the characteristics of the 
+borrower. Data is sourced from LendingClub, a leading online lending 
+platform in the United States. 
 
-Link to Dashboard:
+This project will create the following deliverables to model credit risk:
+
+- Probability of Default (PD) models
+- Loss Given Default (LGD) models
+- Interactive dashboard to present model results and guide policy decisions
+
+Link to dashboard:
   https://credit-risk-default-model-jacobschlessel.streamlit.app/
 
-**Tools**
+Link to dataset:
+  https://www.kaggle.com/datasets/wordsforthewise/lending-club
+
+
+## Goals
+
+- Predict probability of default (PD) at loan origination using historical 
+LendingClub data.
+- Predict loss given default (LGD) to estimate expected losses on defaulted 
+loans.
+- Identify key borrower characteristics and risk factors that contribute to
+default risk and loss severity.
+- Build a decision engine to support credit risk management and lending
+policies.
+- Develop an interactive dashboard to extract insights from 
+lending data and implications of policy decisions. 
+
+## Tools
 - Python
   - Pandas
   - NumPy
   - Scikit-learn
   - PyTorch
   - Statsmodels
+  - Streamlit
+  - Seaborn
 - AWS S3
 
-**Goal**
-Predict probability of default (PD) at loan origination using historical 
-LendingClub data.
+## Methodology
 
-Raw data is stored securely in AWS S3 and loaded programmatically.
+This project follows the entire lifecycle of a data science project, with 
+each step documented in a qmd file in the repository. In these files, I have 
+included all code and visualizations used in analyzing data and building 
+models, as well as creating an interactive dashboard in Streamlit to 
+present results. All steps, from data cleaning to feature engineering to model
+building and evaluation, are annotated and explained in detail, and I have 
+included justifications for all important decisions made along the way. If you
+would like to follow along with my work, please
 
-This project will model the following three systems:
-
-- Probability of Default (PD)
-- Loss Given Default (LGD)
 
 # Variable Definitions
 
