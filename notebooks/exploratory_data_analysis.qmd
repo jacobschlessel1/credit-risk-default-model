@@ -333,7 +333,7 @@ groups = [
     for p in top_5_purposes
 ]
 
-h_stat, p_value_kw = kruskal(*groups)
+h_stat, p_value = kruskal(*groups)
 
 print("Kruskal–Wallis Test: Interest Rate by Loan Purpose (Top 5)")
 print("-" * 55)
