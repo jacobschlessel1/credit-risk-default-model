@@ -199,6 +199,9 @@ xgboost_credit_util_2016_pred = [
     "inq_fi",
     "open_acc_6m",
 ]
+
+
+
 ```
 
 
@@ -228,6 +231,8 @@ import shap
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+import statsmodels.api as sm
+
 
 df_post2016[credit_util_2016_pred] = (
     df_post2016[credit_util_2016_pred].fillna(0))
